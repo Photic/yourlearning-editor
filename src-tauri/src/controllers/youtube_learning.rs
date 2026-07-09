@@ -1,57 +1,16 @@
 use chrono::Local;
-use std::process::Command;
+use std::sync::Mutex;
+use tauri::Manager;
+use tauri_plugin_opener::OpenerExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
+use tokio::task::JoinHandle;
 
 const YOURLEARNING_URL: &str = "https://yourlearning.ibm.com/add-learning";
 
-/// JS template injected into Chrome to auto-fill the YourLearning form.
-/// Placeholders (ALL_CAPS) are replaced with JSON-encoded values before injection.
-const JS_TEMPLATE: &str = r#"(function poll() {
-  var ready = document.readyState === 'complete'
-           && document.querySelectorAll('input[type="text"]').length >= 2
-           && document.querySelector('textarea') !== null;
-  if (!ready) { setTimeout(poll, 200); return; }
-
-  function setVal(el, value, withBlur) {
-    if (!el) return;
-    var proto = el.tagName === 'TEXTAREA'
-      ? window.HTMLTextAreaElement.prototype
-      : window.HTMLInputElement.prototype;
-    var setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
-    el.dispatchEvent(new Event('focus', { bubbles: true }));
-    setter.call(el, value);
-    el.dispatchEvent(new Event('input',  { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-    if (withBlur) el.dispatchEvent(new Event('blur', { bubbles: true }));
-  }
-
-  var textInputs = document.querySelectorAll('input[type="text"]');
-  setVal(textInputs[0], TITLE);
-  if (textInputs.length >= 2) setVal(textInputs[1], URL);
-
-  setVal(document.querySelector('textarea'), DESC);
-
-  var dateInputs = document.querySelectorAll('input[placeholder="yyyy/mm/dd"]');
-  if (dateInputs[0]) setVal(dateInputs[0], TODAY, true);
-  if (dateInputs[1]) setVal(dateInputs[1], TODAY, true);
-
-  var numInputs = document.querySelectorAll('input[type="number"]');
-  if (numInputs[0]) setVal(numInputs[0], HOURS);
-  if (numInputs[1]) setVal(numInputs[1], MINUTES);
-
-  var activityDropdown = document.querySelector('select, [role="combobox"], [role="listbox"], button[aria-haspopup="listbox"]');
-  if (activityDropdown) {
-    activityDropdown.click();
-    setTimeout(function() {
-      var options = document.querySelectorAll('[role="option"], option');
-      for (var i = 0; i < options.length; i++) {
-        if (options[i].textContent.trim().toLowerCase() === 'video') {
-          options[i].click();
-          break;
-        }
-      }
-    }, 300);
-  }
-})();"#;
+/// Fixed port the extension always fetches from.
+/// Using a single well-known port eliminates the two-port discovery dance.
+const RELAY_PORT: u16 = 19421;
 
 // ── YouTube metadata fetch ────────────────────────────────────────────────────
 
@@ -105,7 +64,6 @@ fn extract_player_response(html: &str) -> Option<serde_json::Value> {
     let start = html.find(marker)? + marker.len();
     let slice = &html[start..];
 
-    // Walk forward counting braces to find the matching closing `}`
     let mut depth = 0usize;
     let mut end = 0usize;
     for (i, ch) in slice.char_indices() {
@@ -127,7 +85,6 @@ fn extract_player_response(html: &str) -> Option<serde_json::Value> {
 
 // ── Field processing ──────────────────────────────────────────────────────────
 
-/// `"channel: title"` or just `"title"` when author is absent.
 fn format_title(author: &str, title: &str) -> String {
     if author.is_empty() {
         title.to_string()
@@ -136,13 +93,12 @@ fn format_title(author: &str, title: &str) -> String {
     }
 }
 
-/// Duration in whole hours and remaining minutes.
 fn split_duration(secs: u64) -> (u64, u64) {
     (secs / 3600, (secs % 3600) / 60)
 }
 
-/// Returns the cleaned description, or an empty string when the description is
-/// dominated by links/short labels (≥70 % of non-empty lines).
+/// Returns the cleaned description, or empty when ≥70% of non-empty lines are
+/// link-related (contains a URL or is a short label ≤60 chars).
 fn clean_description(raw: &str) -> String {
     let raw = raw.trim();
     let lines: Vec<&str> = raw.lines().collect();
@@ -166,27 +122,81 @@ fn clean_description(raw: &str) -> String {
         .collect()
 }
 
-/// A line is "link-related" if it contains a URL or is a short label (≤60 chars).
 fn is_link_related(line: &str) -> bool {
     line.contains("http://") || line.contains("https://") || line.trim().len() <= 60
 }
 
-// ── JS building ───────────────────────────────────────────────────────────────
+// ── Relay HTTP server ─────────────────────────────────────────────────────────
 
-fn build_js(title: &str, url: &str, description: &str, today: &str, hours: u64, minutes: u64) -> String {
-    JS_TEMPLATE
-        .replace("TITLE",   &serde_json::to_string(title).unwrap())
-        .replace("URL",     &serde_json::to_string(url).unwrap())
-        .replace("DESC",    &serde_json::to_string(description).unwrap())
-        .replace("TODAY",   &serde_json::to_string(today).unwrap())
-        .replace("HOURS",   &serde_json::to_string(&hours.to_string()).unwrap())
-        .replace("MINUTES", &serde_json::to_string(&minutes.to_string()).unwrap())
+/// State that holds the relay task handle so a previous run can be aborted
+/// before we try to bind the same port again.
+pub struct RelayState(pub Mutex<Option<JoinHandle<()>>>);
+
+/// Aborts any previous relay task, then binds RELAY_PORT and serves the JSON
+/// payload once before shutting down.
+async fn run_relay(app: &tauri::AppHandle, json_body: String) -> Result<(), String> {
+    // Abort the previous relay task (if any) so its port is released.
+    // The lock is dropped before the await so the future stays Send.
+    let previous = app.state::<RelayState>().0.lock().unwrap().take();
+    if let Some(handle) = previous {
+        handle.abort();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    let listener = TcpListener::bind(format!("127.0.0.1:{RELAY_PORT}"))
+        .await
+        .map_err(|e| format!("Failed to bind relay port {RELAY_PORT}: {e}"))?;
+
+    let handle = tokio::spawn(serve_single(listener, json_body, "application/json"));
+    *app.state::<RelayState>().0.lock().unwrap() = Some(handle);
+
+    Ok(())
+}
+
+/// Accepts connections on `listener` and responds to every request with
+/// `body` and `content_type` until the first successful GET, then stops.
+/// OPTIONS preflight requests are answered with a proper CORS response so
+/// the browser proceeds to the actual GET.
+async fn serve_single(listener: TcpListener, body: String, content_type: &'static str) {
+    let cors_preflight =
+        "HTTP/1.1 204 No Content\r\n\
+         Access-Control-Allow-Origin: *\r\n\
+         Access-Control-Allow-Methods: GET, OPTIONS\r\n\
+         Access-Control-Allow-Headers: *\r\n\
+         Connection: close\r\n\r\n"
+        .to_string();
+
+    let data_response = format!(
+        "HTTP/1.1 200 OK\r\n\
+         Content-Type: {content_type}\r\n\
+         Access-Control-Allow-Origin: *\r\n\
+         Access-Control-Allow-Methods: GET, OPTIONS\r\n\
+         Access-Control-Allow-Headers: *\r\n\
+         Content-Length: {}\r\n\
+         Connection: close\r\n\r\n{body}",
+        body.len()
+    );
+
+    loop {
+        if let Ok((mut stream, _)) = listener.accept().await {
+            let mut buf = [0u8; 2048];
+            if stream.read(&mut buf).await.is_ok() {
+                let req = String::from_utf8_lossy(&buf);
+                if req.starts_with("OPTIONS") {
+                    let _ = stream.write_all(cors_preflight.as_bytes()).await;
+                } else if req.starts_with("GET") {
+                    let _ = stream.write_all(data_response.as_bytes()).await;
+                    break; // Served — shut this listener down
+                }
+            }
+        }
+    }
 }
 
 // ── Public command ────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn run_add_learning(url: String) -> Result<String, String> {
+pub async fn run_add_learning(app: tauri::AppHandle, url: String) -> Result<String, String> {
     // Strip extra query params after the video ID (e.g. &t=235s).
     let url = url.trim().splitn(2, '&').next().unwrap_or(&url).to_string();
 
@@ -202,30 +212,25 @@ pub async fn run_add_learning(url: String) -> Result<String, String> {
         sep = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     );
 
-    // ── Open Chrome ──────────────────────────────────────────────────────────
-    Command::new("open")
-        .args(["-a", "Google Chrome", YOURLEARNING_URL])
-        .spawn()
-        .map_err(|e| format!("Failed to open Chrome: {e}"))?;
+    // ── Start relay server ───────────────────────────────────────────────────
+    let json_body = serde_json::json!({
+        "title": title,
+        "url": url,
+        "description": description,
+        "today": today,
+        "hours": hours,
+        "minutes": minutes,
+    })
+    .to_string();
 
-    // Brief pause so Chrome finishes opening the tab before JS injection.
-    std::thread::sleep(std::time::Duration::from_secs(2));
+    run_relay(&app, json_body).await?;
 
-    // ── Inject JS via osascript ───────────────────────────────────────────────
-    let js = build_js(&title, &url, &description, &today, hours, minutes);
-    let applescript = format!(
-        "tell application \"Google Chrome\"\nactivate\nexecute active tab of front window javascript \"{}\"\nend tell",
-        js.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n")
-    );
+    // ── Open YourLearning in the user's default browser ──────────────────────
+    app.opener()
+        .open_url(YOURLEARNING_URL, None::<&str>)
+        .map_err(|e| format!("Failed to open browser: {e}"))?;
 
-    let osa_status = Command::new("osascript")
-        .args(["-e", &applescript])
-        .status()
-        .map_err(|e| format!("Failed to run osascript: {e}"))?;
-
-    if !osa_status.success() {
-        return Err("osascript failed to inject JS into Chrome.".to_string());
-    }
-
-    Ok(format!("{summary}✓ Form will fill automatically once the page finishes loading."))
+    Ok(format!(
+        "{summary}✓ Browser opened — the extension will fill the form automatically."
+    ))
 }

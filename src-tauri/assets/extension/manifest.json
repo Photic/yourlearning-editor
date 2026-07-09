@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "YourLearning Editor",
+  "version": "1.0",
+  "description": "Auto-fills the YourLearning Add Personal Learning form from the YourLearning Editor desktop app.",
+  "content_scripts": [
+    {
+      "matches": ["https://yourlearning.ibm.com/add-learning*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "host_permissions": [
+    "http://localhost/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}

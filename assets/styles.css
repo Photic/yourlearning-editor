@@ -96,6 +96,69 @@ button {
   outline: none;
 }
 
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 1.5rem;
+  border-bottom: 1px solid #ddd;
+  width: 100%;
+}
+
+.tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0.5em 1.1em;
+  color: #555;
+  font-weight: 500;
+  margin-bottom: -1px;
+}
+
+.tab:hover:not(:disabled) {
+  border-color: transparent;
+  color: #0f0f0f;
+}
+
+.tab--active {
+  border-bottom-color: #396cd8;
+  color: #396cd8;
+}
+
+.install-steps {
+  text-align: left;
+  width: 100%;
+  padding-left: 1.4rem;
+  line-height: 2;
+  margin-bottom: 1.5rem;
+}
+
+.mono {
+  font-family: monospace;
+  background: #f0f0f0;
+  padding: 0.1em 0.4em;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+
+.btn-primary {
+  background-color: #396cd8;
+  color: #fff;
+  border-color: #396cd8;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background-color: #2d5bbf;
+  border-color: #2d5bbf;
+}
+
+.status-msg {
+  margin-top: 1rem;
+  color: #396cd8;
+  font-size: 0.9em;
+}
+
 .output {
   margin-top: 1.5rem;
   width: 100%;
@@ -133,6 +196,22 @@ button {
 
   button:active:not(:disabled) {
     background-color: #0f0f0f69;
+  }
+
+  .tabs {
+    border-bottom-color: #444;
+  }
+
+  .tab {
+    color: #aaa;
+  }
+
+  .tab:hover:not(:disabled) {
+    color: #f6f6f6;
+  }
+
+  .mono {
+    background: #333;
   }
 
   .output {
