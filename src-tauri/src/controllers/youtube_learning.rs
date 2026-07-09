@@ -1,5 +1,4 @@
 use chrono::Local;
-use serde_json::Value;
 use std::process::Command;
 
 const YOURLEARNING_URL: &str = "https://yourlearning.ibm.com/add-learning";
@@ -54,46 +53,107 @@ const JS_TEMPLATE: &str = r#"(function poll() {
   }
 })();"#;
 
-// ── Metadata extraction ───────────────────────────────────────────────────────
+// ── YouTube metadata fetch ────────────────────────────────────────────────────
 
-/// `"channel: title"` or just `"title"` when channel is absent.
-fn parse_title(meta: &Value) -> String {
-    let channel = meta["uploader"]
+struct VideoMeta {
+    title: String,
+    author: String,
+    duration_secs: u64,
+    description: String,
+}
+
+/// Fetches the YouTube watch page and extracts `ytInitialPlayerResponse` from
+/// the embedded inline JSON, then returns the fields we need.
+async fn fetch_video_meta(url: &str) -> Result<VideoMeta, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+
+    let html = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch YouTube page: {e}"))?
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read response body: {e}"))?;
+
+    let json_obj = extract_player_response(&html)
+        .ok_or("Could not find ytInitialPlayerResponse in the page. The URL may be invalid.")?;
+
+    let details = &json_obj["videoDetails"];
+
+    let title = details["title"].as_str().unwrap_or("").to_string();
+    let author = details["author"].as_str().unwrap_or("").to_string();
+    let duration_secs = details["lengthSeconds"]
         .as_str()
-        .or_else(|| meta["channel"].as_str())
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
+    let description = details["shortDescription"]
+        .as_str()
         .unwrap_or("")
-        .trim()
         .to_string();
-    let title = meta["title"].as_str().unwrap_or("").trim().to_string();
-    if channel.is_empty() {
-        title
+
+    Ok(VideoMeta { title, author, duration_secs, description })
+}
+
+/// Locates `ytInitialPlayerResponse = {...}` in the page HTML and parses the
+/// JSON object using a brace counter (avoids pulling in a full HTML parser).
+fn extract_player_response(html: &str) -> Option<serde_json::Value> {
+    let marker = "ytInitialPlayerResponse = ";
+    let start = html.find(marker)? + marker.len();
+    let slice = &html[start..];
+
+    // Walk forward counting braces to find the matching closing `}`
+    let mut depth = 0usize;
+    let mut end = 0usize;
+    for (i, ch) in slice.char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = i + 1;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    serde_json::from_str(&slice[..end]).ok()
+}
+
+// ── Field processing ──────────────────────────────────────────────────────────
+
+/// `"channel: title"` or just `"title"` when author is absent.
+fn format_title(author: &str, title: &str) -> String {
+    if author.is_empty() {
+        title.to_string()
     } else {
-        format!("{channel}: {title}")
+        format!("{author}: {title}")
     }
 }
 
 /// Duration in whole hours and remaining minutes.
-fn parse_duration(meta: &Value) -> (u64, u64) {
-    let secs = meta["duration"].as_f64().unwrap_or(0.0) as u64;
+fn split_duration(secs: u64) -> (u64, u64) {
     (secs / 3600, (secs % 3600) / 60)
 }
 
 /// Returns the cleaned description, or an empty string when the description is
 /// dominated by links/short labels (≥70 % of non-empty lines).
-fn parse_description(meta: &Value) -> String {
-    let raw = meta["description"].as_str().unwrap_or("").trim().to_string();
-
+fn clean_description(raw: &str) -> String {
+    let raw = raw.trim();
     let lines: Vec<&str> = raw.lines().collect();
     let non_empty: Vec<&str> = lines.iter().copied().filter(|l| !l.trim().is_empty()).collect();
     let total = non_empty.len().max(1);
 
     let link_related = non_empty.iter().filter(|l| is_link_related(l)).count();
-
     if link_related as f64 / total as f64 >= 0.7 {
         return String::new();
     }
 
-    // Strip lines that contain URLs, then truncate to 1000 chars.
     lines
         .iter()
         .filter(|l| !l.contains("http://") && !l.contains("https://"))
@@ -130,28 +190,11 @@ pub async fn run_add_learning(url: String) -> Result<String, String> {
     // Strip extra query params after the video ID (e.g. &t=235s).
     let url = url.trim().splitn(2, '&').next().unwrap_or(&url).to_string();
 
-    // ── Check yt-dlp ─────────────────────────────────────────────────────────
-    if Command::new("which").arg("yt-dlp").output().map(|o| !o.status.success()).unwrap_or(true) {
-        return Err("yt-dlp is not installed. Run: brew install yt-dlp".to_string());
-    }
-
     // ── Fetch metadata ───────────────────────────────────────────────────────
-    let yt_output = Command::new("yt-dlp")
-        .args(["--dump-json", "--no-download", "--quiet", &url])
-        .output()
-        .map_err(|e| format!("Failed to run yt-dlp: {e}"))?;
-
-    if !yt_output.status.success() || yt_output.stdout.is_empty() {
-        return Err("Could not fetch metadata. Check the URL and try again.".to_string());
-    }
-
-    let meta: Value = serde_json::from_slice(&yt_output.stdout)
-        .map_err(|e| format!("Failed to parse yt-dlp output: {e}"))?;
-
-    // ── Parse fields ─────────────────────────────────────────────────────────
-    let title = parse_title(&meta);
-    let (hours, minutes) = parse_duration(&meta);
-    let description = parse_description(&meta);
+    let meta = fetch_video_meta(&url).await?;
+    let title = format_title(&meta.author, &meta.title);
+    let (hours, minutes) = split_duration(meta.duration_secs);
+    let description = clean_description(&meta.description);
     let today = Local::now().format("%Y/%m/%d").to_string();
 
     let summary = format!(
