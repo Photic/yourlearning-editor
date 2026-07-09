@@ -46,14 +46,14 @@ pub fn App() -> Element {
 
     rsx! {
         link { rel: "stylesheet", href: CSS }
-        main {
-            class: "container",
+        main { class: "container",
             h1 { "YourLearning Adder" }
             p { class: "subtitle", "Paste a YouTube URL to auto-fill the YourLearning form." }
 
-            form {
-                class: "row",
-                onsubmit: submit,
+            br {}
+
+            p { "Add youtube learning" }
+            form { class: "row", onsubmit: submit,
                 input {
                     id: "url-input",
                     r#type: "text",
@@ -62,10 +62,12 @@ pub fn App() -> Element {
                     oninput: move |event| url.set(event.value()),
                     disabled: *is_running.read(),
                 }
-                button {
-                    r#type: "submit",
-                    disabled: *is_running.read(),
-                    if *is_running.read() { "Running…" } else { "Add Learning" }
+                button { r#type: "submit", disabled: *is_running.read(),
+                    if *is_running.read() {
+                        "Running…"
+                    } else {
+                        "Add Learning"
+                    }
                 }
             }
 
