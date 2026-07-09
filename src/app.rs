@@ -29,7 +29,10 @@ pub fn App() -> Element {
     rsx! {
         link { rel: "stylesheet", href: CSS }
         main { class: "container",
-            h1 { "YourLearning Adder" }
+            h1 { "Steen's OWLS" }
+            h5 { "Organised Workflow for Loading & Saving" }
+
+            br {}
 
             // ── Tab bar ───────────────────────────────────────────────────
             div { class: "tabs",
@@ -47,8 +50,12 @@ pub fn App() -> Element {
 
             // ── Tab panels ────────────────────────────────────────────────
             match *active_tab.read() {
-                Tab::AddLearning => rsx! { AddLearningTab {} },
-                Tab::Extension   => rsx! { ExtensionTab {} },
+                Tab::AddLearning => rsx! {
+                    AddLearningTab {}
+                },
+                Tab::Extension => rsx! {
+                    ExtensionTab {}
+                },
             }
         }
     }
@@ -96,7 +103,11 @@ fn AddLearningTab() -> Element {
                 disabled: *is_running.read(),
             }
             button { r#type: "submit", disabled: *is_running.read(),
-                if *is_running.read() { "Running…" } else { "Add Learning" }
+                if *is_running.read() {
+                    "Running…"
+                } else {
+                    "Add Learning"
+                }
             }
         }
 
@@ -127,7 +138,9 @@ fn ExtensionTab() -> Element {
     };
 
     rsx! {
-        p { class: "subtitle", "Install the companion extension once — it auto-fills the form on every run." }
+        p { class: "subtitle",
+            "Install the companion extension once — it auto-fills the form on every run."
+        }
 
         ol { class: "install-steps",
             li { "Click the button below — it opens the extension folder in Finder/Explorer." }
@@ -150,7 +163,11 @@ fn ExtensionTab() -> Element {
             class: "btn-primary",
             disabled: *is_busy.read(),
             onclick: open_folder,
-            if *is_busy.read() { "Exporting…" } else { "Open Extension Folder" }
+            if *is_busy.read() {
+                "Exporting…"
+            } else {
+                "Open Extension Folder"
+            }
         }
 
         if !status.read().is_empty() {

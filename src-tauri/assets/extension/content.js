@@ -59,22 +59,53 @@
   if (numInputs[0]) setVal(numInputs[0], String(data.hours));
   if (numInputs[1]) setVal(numInputs[1], String(data.minutes));
 
-  const dropdown = document.querySelector(
-    'select, [role="combobox"], [role="listbox"], button[aria-haspopup="listbox"]'
-  );
-  if (dropdown) {
-    dropdown.click();
-    await sleep(300);
-    const options = document.querySelectorAll('[role="option"], option');
-    for (const opt of options) {
-      if (opt.textContent.trim().toLowerCase() === "video") {
-        opt.click();
-        break;
-      }
-    }
-  }
+  await selectActivityType("video");
 
   console.debug("[YourLearning Editor] Form filled successfully.");
+
+  // Opens the Activity Type dropdown and clicks the option matching `label`.
+  async function selectActivityType(label) {
+    // Find the dropdown trigger — look for a button/div that contains the
+    // placeholder text or has a listbox/combobox role.
+    const trigger =
+      document.querySelector('[aria-haspopup="listbox"]') ||
+      document.querySelector('[role="combobox"]') ||
+      [...document.querySelectorAll("button")].find((b) =>
+        b.textContent.trim().toLowerCase().includes("activity")
+      );
+
+    if (!trigger) {
+      console.debug("[YourLearning Editor] Activity type trigger not found.");
+      return;
+    }
+
+    trigger.click();
+    console.debug("[YourLearning Editor] Dropdown triggered.");
+
+    // Wait for options to appear in the DOM.
+    let options = [];
+    for (let i = 0; i < 10; i++) {
+      await sleep(200);
+      options = [
+        ...document.querySelectorAll('[role="option"]'),
+        ...document.querySelectorAll('[role="menuitem"]'),
+        ...document.querySelectorAll("li"),
+      ];
+      if (options.length > 0) break;
+    }
+
+    console.debug("[YourLearning Editor] Options found:", options.map(o => o.textContent.trim()));
+
+    const match = options.find(
+      (o) => o.textContent.trim().toLowerCase() === label.toLowerCase()
+    );
+    if (match) {
+      match.click();
+      console.debug("[YourLearning Editor] Selected:", match.textContent.trim());
+    } else {
+      console.debug("[YourLearning Editor] Option not found:", label);
+    }
+  }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 

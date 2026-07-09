@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "yourlearning-editor",
+  "productName": "owls",
   "version": "0.1.0",
-  "identifier": "com.steen.yourlearning-editor",
+  "identifier": "com.steen.owls",
   "build": {
     "beforeDevCommand": "dx serve --port 1420 --interactive false",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "YourLearning Editor",
+        "title": "OWLS",
         "width": 800,
         "height": 600
       }

@@ -1,11 +1,11 @@
 [application]
-name = "yourlearning-adder-ui"
+name = "owls-ui"
 default_platform = "web"
 out_dir = "dist"
 asset_dir = "assets"
 
 [web.app]
-title = "Tauri + Dioxus App"
+title = "OWLS"
 
 [web.watcher]
 reload_html = true
