@@ -13,14 +13,17 @@ extern "C" {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct AddLearningArgs {
     url: String,
+    date_override: String,
 }
 
 #[derive(Clone, PartialEq)]
 enum Tab {
     AddLearning,
     Extension,
+    Help,
 }
 
 pub fn App() -> Element {
@@ -46,6 +49,11 @@ pub fn App() -> Element {
                     onclick: move |_| active_tab.set(Tab::Extension),
                     "Install Extension"
                 }
+                button {
+                    class: if *active_tab.read() == Tab::Help { "tab tab--active" } else { "tab" },
+                    onclick: move |_| active_tab.set(Tab::Help),
+                    "Help"
+                }
             }
 
             // ── Tab panels ────────────────────────────────────────────────
@@ -56,6 +64,9 @@ pub fn App() -> Element {
                 Tab::Extension => rsx! {
                     ExtensionTab {}
                 },
+                Tab::Help => rsx! {
+                    HelpTab {}
+                },
             }
         }
     }
@@ -65,6 +76,7 @@ pub fn App() -> Element {
 
 fn AddLearningTab() -> Element {
     let mut url = use_signal(|| String::new());
+    let mut date_override = use_signal(|| String::new());
     let mut output = use_signal(|| String::new());
     let mut is_running = use_signal(|| false);
 
@@ -79,7 +91,11 @@ fn AddLearningTab() -> Element {
         is_running.set(true);
         output.set(String::new());
 
-        let args = serde_wasm_bindgen::to_value(&AddLearningArgs { url: url_val }).unwrap();
+        let args = serde_wasm_bindgen::to_value(&AddLearningArgs {
+            url: url_val,
+            date_override: date_override.read().trim().to_string(),
+        })
+        .unwrap();
         let result = invoke("run_add_learning", args).await;
 
         match result.as_string() {
@@ -93,20 +109,32 @@ fn AddLearningTab() -> Element {
     rsx! {
         p { class: "subtitle", "Paste a YouTube URL — the extension will auto-fill the form." }
 
-        form { class: "row", onsubmit: submit,
-            input {
-                id: "url-input",
-                r#type: "text",
-                placeholder: "https://www.youtube.com/watch?v=...",
-                value: "{url}",
-                oninput: move |event| url.set(event.value()),
-                disabled: *is_running.read(),
+        form { onsubmit: submit,
+            div { class: "row",
+                input {
+                    id: "url-input",
+                    r#type: "text",
+                    placeholder: "https://www.youtube.com/watch?v=...",
+                    value: "{url}",
+                    oninput: move |event| url.set(event.value()),
+                    disabled: *is_running.read(),
+                }
+                button { r#type: "submit", disabled: *is_running.read() || url.read().trim().is_empty(),
+                    if *is_running.read() {
+                        "Running…"
+                    } else {
+                        "Add Learning"
+                    }
+                }
             }
-            button { r#type: "submit", disabled: *is_running.read(),
-                if *is_running.read() {
-                    "Running…"
-                } else {
-                    "Add Learning"
+            div { class: "date-row",
+                label { r#for: "date-input", "Date override (optional):" }
+                input {
+                    id: "date-input",
+                    r#type: "date",
+                    value: if date_override.read().is_empty() { None } else { Some(date_override.read().clone()) },
+                    oninput: move |event| date_override.set(event.value()),
+                    disabled: *is_running.read(),
                 }
             }
         }
@@ -172,6 +200,80 @@ fn ExtensionTab() -> Element {
 
         if !status.read().is_empty() {
             p { class: "status-msg", "{status}" }
+        }
+    }
+}
+
+// ── Help tab ──────────────────────────────────────────────────────────────────
+
+fn HelpTab() -> Element {
+    rsx! {
+        div { class: "help",
+
+            h3 { "How to add a YouTube video to YourLearning" }
+
+            ol { class: "help-steps",
+                li {
+                    strong { "Paste the URL. " }
+                    "Copy a YouTube video URL and paste it into the "
+                    em { "Add Learning" }
+                    " tab."
+                }
+                li {
+                    strong { "Date (optional). " }
+                    "The app uses the video's original publish date automatically. "
+                    "If you want a different date — for example, the day you actually watched it — "
+                    "click the date field and pick one."
+                }
+                li {
+                    strong { "Click Add Learning. " }
+                    "The app fetches the video's title, duration, and description, "
+                    "then opens "
+                    span { class: "mono", "yourlearning.ibm.com/add-learning" }
+                    " in your browser."
+                }
+                li {
+                    strong { "The extension fills the form. " }
+                    "The companion Chrome extension reads the data and populates every field automatically. "
+                    "Review the details, then submit."
+                }
+            }
+
+            h4 { "FAQ" }
+
+            div { class: "faq-item",
+                p { class: "faq-q", "The form didn't auto-fill — what happened?" }
+                p { class: "faq-a",
+                    "The extension is probably not installed or not enabled. "
+                    "Go to the "
+                    em { "Install Extension" }
+                    " tab and follow the steps."
+                }
+            }
+
+            div { class: "faq-item",
+                p { class: "faq-q", "The duration shows 0h 0m." }
+                p { class: "faq-a",
+                    "Some videos (live streams, premieres) don't expose a duration until they finish processing. "
+                    "You can correct the value manually in the YourLearning form."
+                }
+            }
+
+            div { class: "faq-item",
+                p { class: "faq-q", "Can I use a timestamp URL like ?v=abc&t=120s?" }
+                p { class: "faq-a",
+                    "Yes — the app strips the timestamp and extra parameters automatically, "
+                    "so the correct video is always looked up."
+                }
+            }
+
+            div { class: "faq-item",
+                p { class: "faq-q", "The wrong date was pre-filled." }
+                p { class: "faq-a",
+                    "The date defaults to the video's YouTube publish date. "
+                    "Use the optional date field on the Add Learning tab to override it."
+                }
+            }
         }
     }
 }

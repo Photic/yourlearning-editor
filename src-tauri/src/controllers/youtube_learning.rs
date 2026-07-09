@@ -1,4 +1,4 @@
-use chrono::Local;
+use chrono::{Local, NaiveDate};
 use std::sync::Mutex;
 use tauri::Manager;
 use tauri_plugin_opener::OpenerExt;
@@ -19,6 +19,7 @@ struct VideoMeta {
     author: String,
     duration_secs: u64,
     description: String,
+    publish_date: Option<String>,
 }
 
 /// Fetches the YouTube watch page and extracts `ytInitialPlayerResponse` from
@@ -54,7 +55,15 @@ async fn fetch_video_meta(url: &str) -> Result<VideoMeta, String> {
         .unwrap_or("")
         .to_string();
 
-    Ok(VideoMeta { title, author, duration_secs, description })
+    // publishDate is under microformat.playerMicroformatRenderer.publishDate
+    // as a full ISO 8601 string like "2026-06-29T06:00:36-07:00"; take only
+    // the leading "YYYY-MM-DD" portion and reformat to "YYYY/MM/DD".
+    let publish_date = json_obj["microformat"]["playerMicroformatRenderer"]["publishDate"]
+        .as_str()
+        .and_then(|s| NaiveDate::parse_from_str(&s[..s.len().min(10)], "%Y-%m-%d").ok())
+        .map(|d| d.format("%Y/%m/%d").to_string());
+
+    Ok(VideoMeta { title, author, duration_secs, description, publish_date })
 }
 
 /// Locates `ytInitialPlayerResponse = {...}` in the page HTML and parses the
@@ -196,7 +205,11 @@ async fn serve_single(listener: TcpListener, body: String, content_type: &'stati
 // ── Public command ────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn run_add_learning(app: tauri::AppHandle, url: String) -> Result<String, String> {
+pub async fn run_add_learning(
+    app: tauri::AppHandle,
+    url: String,
+    date_override: String,
+) -> Result<String, String> {
     // Strip extra query params after the video ID (e.g. &t=235s).
     let url = url.trim().splitn(2, '&').next().unwrap_or(&url).to_string();
 
@@ -205,7 +218,18 @@ pub async fn run_add_learning(app: tauri::AppHandle, url: String) -> Result<Stri
     let title = format_title(&meta.author, &meta.title);
     let (hours, minutes) = split_duration(meta.duration_secs);
     let description = clean_description(&meta.description);
-    let today = Local::now().format("%Y/%m/%d").to_string();
+
+    // Priority: user override → video publish date → today
+    let today = if !date_override.trim().is_empty() {
+        // Browser date inputs emit "YYYY-MM-DD"; reformat to "YYYY/MM/DD".
+        NaiveDate::parse_from_str(date_override.trim(), "%Y-%m-%d")
+            .map(|d| d.format("%Y/%m/%d").to_string())
+            .unwrap_or_else(|_| date_override.trim().to_string())
+    } else {
+        meta.publish_date
+            .clone()
+            .unwrap_or_else(|| Local::now().format("%Y/%m/%d").to_string())
+    };
 
     let summary = format!(
         "\n{sep}\n  YourLearning — Add Personal Learning\n{sep}\n  Title:    {title}\n  URL:      {url}\n  Duration: {hours}h {minutes}m\n  Date:     {today}\n{sep}\n",

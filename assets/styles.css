@@ -71,6 +71,24 @@ button {
   flex: 1;
 }
 
+form {
+  width: 100%;
+}
+
+.date-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 0.9em;
+  color: #555;
+}
+
+#date-input {
+  padding: 0.4em 0.7em;
+  font-size: 0.9em;
+}
+
 button {
   cursor: pointer;
   white-space: nowrap;
@@ -174,6 +192,42 @@ button {
   box-shadow: 0 2px 2px rgba(0, 0, 0, 0.1);
 }
 
+.help {
+  width: 100%;
+  text-align: left;
+}
+
+.help h3 {
+  margin-bottom: 0.5rem;
+}
+
+.help h4 {
+  margin-top: 1.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.help-steps {
+  padding-left: 1.4rem;
+  line-height: 2;
+  margin-bottom: 0;
+}
+
+.faq-item {
+  border-top: 1px solid #e5e5e5;
+  padding: 0.75rem 0;
+}
+
+.faq-q {
+  font-weight: 600;
+  margin: 0 0 0.2rem;
+}
+
+.faq-a {
+  margin: 0;
+  color: #555;
+  font-size: 0.95em;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     color: #f6f6f6;
@@ -181,6 +235,18 @@ button {
   }
 
   .subtitle {
+    color: #aaa;
+  }
+
+  .date-row {
+    color: #aaa;
+  }
+
+  .faq-item {
+    border-top-color: #444;
+  }
+
+  .faq-a {
     color: #aaa;
   }
 
