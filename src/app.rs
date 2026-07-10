@@ -3,6 +3,7 @@
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
+use js_sys;
 
 static CSS: Asset = asset!("/assets/styles.css");
 
@@ -76,7 +77,15 @@ pub fn App() -> Element {
 
 fn AddLearningTab() -> Element {
     let mut url = use_signal(|| String::new());
-    let mut date_override = use_signal(|| String::new());
+    let mut date_override = use_signal(|| {
+        js_sys::Date::new_0()
+            .to_iso_string()
+            .as_string()
+            .unwrap_or_default()
+            .chars()
+            .take(10)
+            .collect::<String>()
+    });
     let mut output = use_signal(|| String::new());
     let mut is_running = use_signal(|| false);
 
@@ -116,7 +125,11 @@ fn AddLearningTab() -> Element {
                     r#type: "text",
                     placeholder: "https://www.youtube.com/watch?v=...",
                     value: "{url}",
-                    oninput: move |event| url.set(event.value()),
+                    oninput: move |event| {
+                        url.set(event.value());
+                        date_override.set(String::new());
+                        output.set(String::new());
+                    },
                     disabled: *is_running.read(),
                 }
                 button { r#type: "submit", disabled: *is_running.read() || url.read().trim().is_empty(),
@@ -127,15 +140,16 @@ fn AddLearningTab() -> Element {
                     }
                 }
             }
-            div { class: "date-row",
-                label { r#for: "date-input", "Date override (optional):" }
-                input {
-                    id: "date-input",
-                    r#type: "date",
-                    value: if date_override.read().is_empty() { None } else { Some(date_override.read().clone()) },
-                    oninput: move |event| date_override.set(event.value()),
-                    disabled: *is_running.read(),
-                }
+        }
+
+        div { class: "date-row",
+            label { r#for: "date-input", "Date override (optional):" }
+            input {
+                id: "date-input",
+                r#type: "date",
+                value: if date_override.read().is_empty() { None } else { Some(date_override.read().clone()) },
+                oninput: move |event| date_override.set(event.value()),
+                disabled: *is_running.read(),
             }
         }
 

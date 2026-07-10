@@ -2,7 +2,7 @@
 name = "owls"
 version = "0.1.0"
 description = "Organised Workflow for Loading & Saving"
-authors = ["you"]
+authors = ["Steen René Hansen"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -23,11 +23,22 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = "0.4"
+dotenvy = "0.15"
 reqwest = { version = "0.12", default-features = false, features = [
-    "rustls-tls",
+    "rustls-tls-native-roots",
     "json",
+    "cookies",
+    "gzip",
+    "brotli",
 ] }
-tokio = { version = "1", features = ["rt", "net", "io-util", "time"] }
+tokio = { version = "1", features = [
+    "rt",
+    "rt-multi-thread",
+    "net",
+    "io-util",
+    "time",
+    "process",
+] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
