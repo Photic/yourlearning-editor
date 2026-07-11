@@ -89,10 +89,21 @@ fn extract_player_response(html: &str) -> Option<serde_json::Value> {
 
 // ── HF Inference API (bart-large-cnn) ────────────────────────────────────────
 
-/// Reads HF_API_TOKEN from the environment (or from a `.env` file in the
-/// working directory via dotenvy).  Returns `None` if not set.
+/// Returns the HuggingFace API token.
+///
+/// Priority:
+/// 1. Compile-time: `HF_API_TOKEN` baked in via `option_env!` (used in
+///    release/DMG builds where no `.env` file is present at runtime).
+/// 2. Runtime: `HF_API_TOKEN` env-var or a `.env` file in the working
+///    directory (convenient for `cargo tauri dev`).
 fn hf_api_token() -> Option<String> {
-    // Load .env if present — silently ignore if missing.
+    // 1. Compile-time value — present when the env-var was set during `cargo build`.
+    if let Some(t) = option_env!("HF_API_TOKEN") {
+        if !t.is_empty() {
+            return Some(t.to_string());
+        }
+    }
+    // 2. Runtime fallback — load .env if present, then check the env-var.
     let _ = dotenvy::dotenv();
     std::env::var("HF_API_TOKEN").ok().filter(|s| !s.is_empty())
 }
@@ -342,8 +353,13 @@ fn parse_json3_transcript(body: &str) -> Option<String> {
 }
 
 /// Parses the timedtext format="3" XML returned by the YouTube player API.
-/// Structure: <body> contains <p> paragraphs, each with <s> word segments.
-/// Each <s> holds the word text as its content.
+///
+/// Two formats are encountered in the wild:
+/// - Modern ASR captions: `<p>` contains `<s>` word segments.
+/// - Older / manual captions: text sits directly inside `<p>` with no children.
+///
+/// We try the `<s>`-segment path first; if that yields nothing we fall back to
+/// stripping all child tags from `<p>` and using the raw text content.
 fn parse_xml_transcript(xml: &str) -> Option<String> {
     // Find <body> — everything before it is header metadata we skip.
     let body_start = xml.find("<body>")?;
@@ -361,7 +377,7 @@ fn parse_xml_transcript(xml: &str) -> Option<String> {
         };
         let p_block = &remaining[..p_close + 4];
 
-        // Collect all <s …>text</s> segments inside this paragraph.
+        // ── Path 1: collect all <s …>text</s> segments ───────────────────────
         let mut para = String::new();
         let mut seg = p_block;
         while let Some(s_open) = seg.find("<s") {
@@ -382,6 +398,26 @@ fn parse_xml_transcript(xml: &str) -> Option<String> {
             let word = decode_xml_entities(&seg[content_start..content_end]);
             para.push_str(&word);
             seg = &seg[content_end + 4..];
+        }
+
+        // ── Path 2: no <s> segments — text is directly inside <p> ────────────
+        // Skip past the opening <p …> tag, then strip any remaining child tags.
+        if para.is_empty() {
+            if let Some(tag_end) = p_block.find('>') {
+                let inner = &p_block[tag_end + 1..];
+                // Strip everything that looks like a tag.
+                let mut raw = String::new();
+                let mut inside_tag = false;
+                for ch in inner.chars() {
+                    match ch {
+                        '<' => inside_tag = true,
+                        '>' => inside_tag = false,
+                        _ if !inside_tag => raw.push(ch),
+                        _ => {}
+                    }
+                }
+                para = decode_xml_entities(raw.replace('\n', " ").trim());
+            }
         }
 
         let para = para.trim().to_string();
