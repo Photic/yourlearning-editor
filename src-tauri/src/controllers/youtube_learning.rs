@@ -1,3 +1,4 @@
+use crate::control::sqlite::SqliteState;
 use chrono::{Local, NaiveDate};
 use std::sync::Mutex;
 use tauri::Manager;
@@ -92,18 +93,23 @@ fn extract_player_response(html: &str) -> Option<serde_json::Value> {
 /// Returns the HuggingFace API token.
 ///
 /// Priority:
-/// 1. Compile-time: `HF_API_TOKEN` baked in via `option_env!` (used in
-///    release/DMG builds where no `.env` file is present at runtime).
-/// 2. Runtime: `HF_API_TOKEN` env-var or a `.env` file in the working
-///    directory (convenient for `cargo tauri dev`).
-fn hf_api_token() -> Option<String> {
-    // 1. Compile-time value — present when the env-var was set during `cargo build`.
+/// 1. Value stored in local SQLite settings.
+/// 2. Compile-time: `HF_API_TOKEN` baked in via `option_env!`.
+/// 3. Runtime: `HF_API_TOKEN` env-var or a `.env` file in the working
+///    directory.
+fn hf_api_token(app: &tauri::AppHandle) -> Option<String> {
+    if let Ok(token) = app.state::<SqliteState>().get_setting("HF_API_TOKEN") {
+        if let Some(token) = token.filter(|value| !value.is_empty()) {
+            return Some(token);
+        }
+    }
+
     if let Some(t) = option_env!("HF_API_TOKEN") {
         if !t.is_empty() {
             return Some(t.to_string());
         }
     }
-    // 2. Runtime fallback — load .env if present, then check the env-var.
+
     let _ = dotenvy::dotenv();
     std::env::var("HF_API_TOKEN").ok().filter(|s| !s.is_empty())
 }
@@ -115,8 +121,8 @@ fn hf_api_token() -> Option<String> {
 /// Handles the HF cold-start case: if the model is still loading the API
 /// returns `{"error":"Loading…","estimated_time":<secs>}`.  We honour that
 /// delay and retry once with `wait_for_model: true`.
-async fn summarize_with_bart(text: &str) -> Option<String> {
-    let token = match hf_api_token() {
+async fn summarize_with_bart(app: &tauri::AppHandle, text: &str) -> Option<String> {
+    let token = match hf_api_token(app) {
         Some(t) => t,
         None => {
             println!("[HF] HF_API_TOKEN not set in environment or .env — skipping summary.");
@@ -530,6 +536,7 @@ pub async fn run_add_learning(
     app: tauri::AppHandle,
     url: String,
     date_override: String,
+    use_ai_summary: bool,
 ) -> Result<String, String> {
     // Strip extra query params after the video ID (e.g. &t=235s).
     let url = url.trim().splitn(2, '&').next().unwrap_or(&url).to_string();
@@ -540,12 +547,12 @@ pub async fn run_add_learning(
     let (hours, minutes) = split_duration(meta.duration_secs);
 
     // ── Fetch captions via yt-dlp and summarise ──────────────────────────────
-    let description = {
+    let description = if use_ai_summary {
         let transcript = fetch_captions(&url).await;
         match transcript {
             Some(text) => {
                 println!("[CC] Transcript ({} chars):\n{text}\n", text.len());
-                let summary = summarize_with_bart(&text).await;
+                let summary = summarize_with_bart(&app, &text).await;
                 println!("[CC] Summary: {summary:?}");
                 summary.unwrap_or_default()
             }
@@ -554,6 +561,8 @@ pub async fn run_add_learning(
                 String::new()
             }
         }
+    } else {
+        String::new()
     };
 
     // Priority: user override → video publish date → today

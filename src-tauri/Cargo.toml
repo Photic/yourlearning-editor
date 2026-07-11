@@ -39,6 +39,9 @@ tokio = { version = "1", features = [
     "time",
     "process",
 ] }
+r2d2 = "0.8.10"
+r2d2_sqlite = "0.35.0"
+rusqlite = { version = "0.40.1", features = ["bundled"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

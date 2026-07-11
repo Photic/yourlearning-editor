@@ -18,11 +18,23 @@ extern "C" {
 struct AddLearningArgs {
     url: String,
     date_override: String,
+    use_ai_summary: bool,
+}
+
+#[derive(Serialize)]
+struct SetTokenArgs {
+    value: String,
+}
+
+#[derive(Serialize)]
+struct SetUseAiSummaryArgs {
+    value: bool,
 }
 
 #[derive(Clone, PartialEq)]
 enum Tab {
     AddLearning,
+    HfToken,
     Extension,
     Help,
 }
@@ -46,6 +58,11 @@ pub fn App() -> Element {
                     "Add Learning"
                 }
                 button {
+                    class: if *active_tab.read() == Tab::HfToken { "tab tab--active" } else { "tab" },
+                    onclick: move |_| active_tab.set(Tab::HfToken),
+                    "HF Token"
+                }
+                button {
                     class: if *active_tab.read() == Tab::Extension { "tab tab--active" } else { "tab" },
                     onclick: move |_| active_tab.set(Tab::Extension),
                     "Install Extension"
@@ -60,7 +77,10 @@ pub fn App() -> Element {
             // ── Tab panels ────────────────────────────────────────────────
             match *active_tab.read() {
                 Tab::AddLearning => rsx! {
-                    AddLearningTab {}
+                    AddLearningTab { active_tab }
+                },
+                Tab::HfToken => rsx! {
+                    HfTokenTab {}
                 },
                 Tab::Extension => rsx! {
                     ExtensionTab {}
@@ -75,7 +95,8 @@ pub fn App() -> Element {
 
 // ── Add Learning tab ──────────────────────────────────────────────────────────
 
-fn AddLearningTab() -> Element {
+#[component]
+fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
     let mut url = use_signal(|| String::new());
     let mut date_override = use_signal(|| {
         js_sys::Date::new_0()
@@ -86,8 +107,20 @@ fn AddLearningTab() -> Element {
             .take(10)
             .collect::<String>()
     });
+    let mut use_ai_summary = use_signal(|| false);
+    let mut has_hf_token = use_signal(|| false);
     let mut output = use_signal(|| String::new());
     let mut is_running = use_signal(|| false);
+
+    use_resource(move || async move {
+        let token_result = invoke("get_hf_api_token", JsValue::NULL).await;
+        let token = token_result.as_string().filter(|value| !value.trim().is_empty());
+        let has_token = token.is_some();
+        has_hf_token.set(has_token);
+
+        let use_ai_result = invoke("get_use_ai_summary", JsValue::NULL).await;
+        use_ai_summary.set(use_ai_result.as_bool().unwrap_or(has_token));
+    });
 
     let submit = move |event: FormEvent| async move {
         event.prevent_default();
@@ -103,6 +136,7 @@ fn AddLearningTab() -> Element {
         let args = serde_wasm_bindgen::to_value(&AddLearningArgs {
             url: url_val,
             date_override: date_override.read().trim().to_string(),
+            use_ai_summary: *use_ai_summary.read(),
         })
         .unwrap();
         let result = invoke("run_add_learning", args).await;
@@ -151,10 +185,114 @@ fn AddLearningTab() -> Element {
                 oninput: move |event| date_override.set(event.value()),
                 disabled: *is_running.read(),
             }
+            label { class: "checkbox-row", r#for: "use-ai-summary",
+                input {
+                    id: "use-ai-summary",
+                    r#type: "checkbox",
+                    checked: *use_ai_summary.read(),
+                    onchange: move |event| {
+                        spawn(async move {
+                            if !event.checked() {
+                                use_ai_summary.set(false);
+                                let args = serde_wasm_bindgen::to_value(&SetUseAiSummaryArgs {
+                                    value: false,
+                                })
+                                .unwrap();
+                                let _ = invoke("set_use_ai_summary", args).await;
+                                return;
+                            }
+
+                            if *has_hf_token.read() {
+                                use_ai_summary.set(true);
+                                let args = serde_wasm_bindgen::to_value(&SetUseAiSummaryArgs {
+                                    value: true,
+                                })
+                                .unwrap();
+                                let _ = invoke("set_use_ai_summary", args).await;
+                                return;
+                            }
+
+                            use_ai_summary.set(false);
+                            let args = serde_wasm_bindgen::to_value(&SetUseAiSummaryArgs {
+                                value: false,
+                            })
+                            .unwrap();
+                            let _ = invoke("set_use_ai_summary", args).await;
+                            active_tab.set(Tab::HfToken);
+                        });
+                    },
+                    disabled: *is_running.read(),
+                }
+                "Use AI summary"
+            }
         }
 
         if !output.read().is_empty() {
             pre { class: "output", "{output}" }
+        }
+    }
+}
+
+// ── HF Token tab ──────────────────────────────────────────────────────────────
+
+fn HfTokenTab() -> Element {
+    let mut token = use_signal(String::new);
+    let mut status = use_signal(String::new);
+    let mut is_saving = use_signal(|| false);
+
+    use_resource(move || async move {
+        let result = invoke("get_hf_api_token", JsValue::NULL).await;
+        token.set(result.as_string().unwrap_or_default());
+    });
+
+    let save_token = move |event: FormEvent| async move {
+        event.prevent_default();
+        is_saving.set(true);
+        status.set(String::new());
+
+        let args = serde_wasm_bindgen::to_value(&SetTokenArgs {
+            value: token.read().trim().to_string(),
+        })
+        .unwrap();
+        let result = invoke("set_hf_api_token", args).await;
+
+        match result.as_string() {
+            Some(msg) if !msg.is_empty() => status.set(format!("Error: {msg}")),
+            _ => status.set("✓ HF token saved locally.".to_string()),
+        }
+
+        is_saving.set(false);
+    };
+
+    rsx! {
+        p { class: "subtitle", "Store your Hugging Face token locally for AI summaries." }
+
+        form { onsubmit: save_token,
+            div { class: "token-form",
+                label { r#for: "hf-token-input", "HF API token" }
+                input {
+                    id: "hf-token-input",
+                    r#type: "text",
+                    value: "{token}",
+                    placeholder: "hf_...",
+                    oninput: move |event| token.set(event.value()),
+                    disabled: *is_saving.read(),
+                }
+                button {
+                    r#type: "submit",
+                    class: "btn-primary",
+                    disabled: *is_saving.read(),
+                    if *is_saving.read() {
+                        "Saving…"
+                    } else {
+                        "Save"
+                    }
+                }
+            }
+        }
+
+        if !status.read().is_empty() {
+            p { class: "status-msg", "{status}" }
         }
     }
 }

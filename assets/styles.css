@@ -83,6 +83,18 @@ form {
   font-size: 0.9em;
   color: #555;
   width: 100%;
+  flex-wrap: wrap;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+}
+
+.checkbox-row input {
+  margin: 0;
 }
 
 #date-input {
@@ -161,10 +173,24 @@ button {
   font-size: 0.9em;
 }
 
+.token-form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  text-align: left;
+}
+
+.token-form input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
 .btn-primary {
   background-color: #396cd8;
   color: #fff;
   border-color: #396cd8;
+  align-self: flex-start;
 }
 
 .btn-primary:hover:not(:disabled) {
