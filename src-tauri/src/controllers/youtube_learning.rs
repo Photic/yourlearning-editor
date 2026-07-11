@@ -188,6 +188,56 @@ async fn summarize_with_bart(app: &tauri::AppHandle, text: &str) -> Option<Strin
     value.get(0)?.get("summary_text")?.as_str().map(|s| s.trim().to_string())
 }
 
+// ── Transcript analytics ──────────────────────────────────────────────────────
+
+/// Computes the LIX (Läsbarhetsindex) readability score for `text`.
+///
+/// Formula:  LIX = (words / sentences) + ((long_words * 100) / words)
+/// where a "long word" is any word with more than 6 characters.
+///
+/// Returns `None` if the text has no words or no sentence-ending punctuation.
+fn compute_lix(text: &str) -> Option<f64> {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let word_count = words.len();
+    if word_count == 0 {
+        return None;
+    }
+
+    let long_word_count = words
+        .iter()
+        .filter(|w| w.chars().filter(|c| c.is_alphabetic()).count() > 6)
+        .count();
+
+    // Count sentences by sentence-ending punctuation (.  !  ?)
+    let sentence_count = text
+        .chars()
+        .filter(|&c| c == '.' || c == '!' || c == '?')
+        .count()
+        .max(1); // avoid division by zero for texts without punctuation
+
+    let lix =
+        (word_count as f64 / sentence_count as f64) + (long_word_count as f64 * 100.0 / word_count as f64);
+    Some(lix)
+}
+
+/// Returns word count and estimated reading time (at 150 wpm, typical for audio/lectures).
+fn transcript_stats(text: &str) -> (usize, usize) {
+    let words = text.split_whitespace().count();
+    let minutes = (words + 149) / 150; // ceiling division
+    (words, minutes)
+}
+
+/// Human-readable LIX band label.
+fn lix_label(lix: f64) -> &'static str {
+    match lix as u32 {
+        0..=24 => "Very easy",
+        25..=34 => "Easy",
+        35..=44 => "Medium",
+        45..=54 => "Difficult",
+        _ => "Very difficult",
+    }
+}
+
 // ── Field processing ──────────────────────────────────────────────────────────
 
 fn format_title(author: &str, title: &str) -> String {
@@ -547,22 +597,37 @@ pub async fn run_add_learning(
     let (hours, minutes) = split_duration(meta.duration_secs);
 
     // ── Fetch captions via yt-dlp and summarise ──────────────────────────────
-    let description = if use_ai_summary {
+    let (description, transcript_info) = if use_ai_summary {
         let transcript = fetch_captions(&url).await;
         match transcript {
             Some(text) => {
                 println!("[CC] Transcript ({} chars):\n{text}\n", text.len());
                 let summary = summarize_with_bart(&app, &text).await;
                 println!("[CC] Summary: {summary:?}");
-                summary.unwrap_or_default()
+
+                // Compute transcript analytics (LIX, word count, reading time)
+                let lix = compute_lix(&text);
+                let (words, read_mins) = transcript_stats(&text);
+                let info = match lix {
+                    Some(score) => format!(
+                        "  Transcript:  {} words  |  ~{} min read\n  LIX score:   {:.1} — {}",
+                        words, read_mins, score, lix_label(score)
+                    ),
+                    None => format!(
+                        "  Transcript:  {} words  |  ~{} min read",
+                        words, read_mins
+                    ),
+                };
+
+                (summary.unwrap_or_default(), Some(info))
             }
             None => {
                 println!("[CC] No captions found (yt-dlp not installed or video has no CC)");
-                String::new()
+                (String::new(), None)
             }
         }
     } else {
-        String::new()
+        (String::new(), None)
     };
 
     // Priority: user override → video publish date → today
@@ -577,8 +642,13 @@ pub async fn run_add_learning(
             .unwrap_or_else(|| Local::now().format("%Y/%m/%d").to_string())
     };
 
+    let analytics_line = match &transcript_info {
+        Some(info) => format!("{info}\n"),
+        None => String::new(),
+    };
+
     let summary = format!(
-        "\n{sep}\n  YourLearning — Add Personal Learning\n{sep}\n  Title:    {title}\n  URL:      {url}\n  Duration: {hours}h {minutes}m\n  Date:     {today}\n{sep}\n",
+        "\n{sep}\n  YourLearning — Add Personal Learning\n{sep}\n  Title:    {title}\n  URL:      {url}\n  Duration: {hours}h {minutes}m\n  Date:     {today}\n{sep}\n{analytics_line}",
         sep = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     );
 
