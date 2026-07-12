@@ -150,14 +150,16 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
     };
 
     rsx! {
-        p { class: "subtitle", "Paste a YouTube URL — the extension will auto-fill the form." }
+        p { class: "subtitle",
+            "Paste a YouTube or Article URL — the extension will auto-fill the form."
+        }
 
         form { onsubmit: submit,
             div { class: "row",
                 input {
                     id: "url-input",
                     r#type: "text",
-                    placeholder: "https://www.youtube.com/watch?v=...",
+                    placeholder: "https://...",
                     value: "{url}",
                     oninput: move |event| {
                         url.set(event.value());
@@ -166,7 +168,9 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
                     },
                     disabled: *is_running.read(),
                 }
-                button { r#type: "submit", disabled: *is_running.read() || url.read().trim().is_empty(),
+                button {
+                    r#type: "submit",
+                    disabled: *is_running.read() || url.read().trim().is_empty(),
                     if *is_running.read() {
                         "Running…"
                     } else {
@@ -194,29 +198,32 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
                         spawn(async move {
                             if !event.checked() {
                                 use_ai_summary.set(false);
-                                let args = serde_wasm_bindgen::to_value(&SetUseAiSummaryArgs {
-                                    value: false,
-                                })
-                                .unwrap();
+                                let args = serde_wasm_bindgen::to_value(
+                                        &SetUseAiSummaryArgs {
+                                            value: false,
+                                        },
+
+                                    )
+                                    .unwrap();
                                 let _ = invoke("set_use_ai_summary", args).await;
                                 return;
                             }
-
                             if *has_hf_token.read() {
                                 use_ai_summary.set(true);
-                                let args = serde_wasm_bindgen::to_value(&SetUseAiSummaryArgs {
-                                    value: true,
-                                })
-                                .unwrap();
+                                let args = serde_wasm_bindgen::to_value(
+                                        &SetUseAiSummaryArgs { value: true },
+                                    )
+                                    .unwrap();
                                 let _ = invoke("set_use_ai_summary", args).await;
                                 return;
                             }
-
                             use_ai_summary.set(false);
-                            let args = serde_wasm_bindgen::to_value(&SetUseAiSummaryArgs {
-                                value: false,
-                            })
-                            .unwrap();
+                            let args = serde_wasm_bindgen::to_value(
+                                    &SetUseAiSummaryArgs {
+                                        value: false,
+                                    },
+                                )
+                                .unwrap();
                             let _ = invoke("set_use_ai_summary", args).await;
                             active_tab.set(Tab::HfToken);
                         });

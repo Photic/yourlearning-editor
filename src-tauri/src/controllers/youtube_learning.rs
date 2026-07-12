@@ -97,7 +97,7 @@ fn extract_player_response(html: &str) -> Option<serde_json::Value> {
 /// 2. Compile-time: `HF_API_TOKEN` baked in via `option_env!`.
 /// 3. Runtime: `HF_API_TOKEN` env-var or a `.env` file in the working
 ///    directory.
-fn hf_api_token(app: &tauri::AppHandle) -> Option<String> {
+pub(crate) fn hf_api_token(app: &tauri::AppHandle) -> Option<String> {
     if let Ok(token) = app.state::<SqliteState>().get_setting("HF_API_TOKEN") {
         if let Some(token) = token.filter(|value| !value.is_empty()) {
             return Some(token);
@@ -121,7 +121,7 @@ fn hf_api_token(app: &tauri::AppHandle) -> Option<String> {
 /// Handles the HF cold-start case: if the model is still loading the API
 /// returns `{"error":"Loading…","estimated_time":<secs>}`.  We honour that
 /// delay and retry once with `wait_for_model: true`.
-async fn summarize_with_bart(app: &tauri::AppHandle, text: &str) -> Option<String> {
+pub(crate) async fn summarize_with_bart(app: &tauri::AppHandle, text: &str) -> Option<String> {
     let token = match hf_api_token(app) {
         Some(t) => t,
         None => {
@@ -196,7 +196,7 @@ async fn summarize_with_bart(app: &tauri::AppHandle, text: &str) -> Option<Strin
 /// where a "long word" is any word with more than 6 characters.
 ///
 /// Returns `None` if the text has no words or no sentence-ending punctuation.
-fn compute_lix(text: &str) -> Option<f64> {
+pub(crate) fn compute_lix(text: &str) -> Option<f64> {
     let words: Vec<&str> = text.split_whitespace().collect();
     let word_count = words.len();
     if word_count == 0 {
@@ -221,14 +221,14 @@ fn compute_lix(text: &str) -> Option<f64> {
 }
 
 /// Returns word count and estimated reading time (at 150 wpm, typical for audio/lectures).
-fn transcript_stats(text: &str) -> (usize, usize) {
+pub(crate) fn transcript_stats(text: &str) -> (usize, usize) {
     let words = text.split_whitespace().count();
     let minutes = (words + 149) / 150; // ceiling division
     (words, minutes)
 }
 
 /// Human-readable LIX band label.
-fn lix_label(lix: f64) -> &'static str {
+pub(crate) fn lix_label(lix: f64) -> &'static str {
     match lix as u32 {
         0..=24 => "Very easy",
         25..=34 => "Easy",
@@ -248,7 +248,7 @@ fn format_title(author: &str, title: &str) -> String {
     }
 }
 
-fn split_duration(secs: u64) -> (u64, u64) {
+pub(crate) fn split_duration(secs: u64) -> (u64, u64) {
     (secs / 3600, (secs % 3600) / 60)
 }
 
@@ -509,7 +509,7 @@ pub struct RelayState(pub Mutex<Option<JoinHandle<()>>>);
 
 /// Aborts any previous relay task, then binds RELAY_PORT and serves the JSON
 /// payload once before shutting down.
-async fn run_relay(app: &tauri::AppHandle, json_body: String) -> Result<(), String> {
+pub(crate) async fn run_relay(app: &tauri::AppHandle, json_body: String) -> Result<(), String> {
     // Abort the previous relay task (if any) so its port is released.
     // The lock is dropped before the await so the future stays Send.
     let previous = app.state::<RelayState>().0.lock().unwrap().take();
@@ -579,33 +579,76 @@ async fn serve_single(listener: TcpListener, body: String, content_type: &'stati
     }
 }
 
-// ── Public command ────────────────────────────────────────────────────────────
+// ── Helpers shared with other controllers ─────────────────────────────────────
 
-#[tauri::command]
-pub async fn run_add_learning(
-    app: tauri::AppHandle,
-    url: String,
-    date_override: String,
+/// Formats the output block and analytics line, fires the relay, opens the
+/// browser and returns the displayable summary string.
+pub(crate) async fn finish_add_learning(
+    app: &tauri::AppHandle,
+    url: &str,
+    title: &str,
+    hours: u64,
+    minutes: u64,
+    today: &str,
+    description: &str,
+    transcript_info: Option<String>,
+) -> Result<String, String> {
+    let analytics_line = match &transcript_info {
+        Some(info) => format!("{info}\n"),
+        None => String::new(),
+    };
+
+    let summary = format!(
+        "\n{sep}\n  YourLearning — Add Personal Learning\n{sep}\n  Title:    {title}\n  URL:      {url}\n  Duration: {hours}h {minutes}m\n  Date:     {today}\n{sep}\n{analytics_line}",
+        sep = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    );
+
+    let json_body = serde_json::json!({
+        "title": title,
+        "url": url,
+        "description": description,
+        "today": today,
+        "hours": hours,
+        "minutes": minutes,
+    })
+    .to_string();
+
+    run_relay(app, json_body).await?;
+
+    app.opener()
+        .open_url(YOURLEARNING_URL, None::<&str>)
+        .map_err(|e| format!("Failed to open browser: {e}"))?;
+
+    Ok(format!(
+        "{summary}✓ Browser opened — the extension will fill the form automatically."
+    ))
+}
+
+// ── YouTube-specific handler ──────────────────────────────────────────────────
+
+async fn run_youtube(
+    app: &tauri::AppHandle,
+    url: &str,
+    date_override: &str,
     use_ai_summary: bool,
 ) -> Result<String, String> {
     // Strip extra query params after the video ID (e.g. &t=235s).
-    let url = url.trim().splitn(2, '&').next().unwrap_or(&url).to_string();
+    let url = url.splitn(2, '&').next().unwrap_or(url);
 
     // ── Fetch metadata ───────────────────────────────────────────────────────
-    let meta = fetch_video_meta(&url).await?;
+    let meta = fetch_video_meta(url).await?;
     let title = format_title(&meta.author, &meta.title);
     let (hours, minutes) = split_duration(meta.duration_secs);
 
-    // ── Fetch captions via yt-dlp and summarise ──────────────────────────────
+    // ── Fetch captions and summarise ─────────────────────────────────────────
     let (description, transcript_info) = if use_ai_summary {
-        let transcript = fetch_captions(&url).await;
+        let transcript = fetch_captions(url).await;
         match transcript {
             Some(text) => {
                 println!("[CC] Transcript ({} chars):\n{text}\n", text.len());
-                let summary = summarize_with_bart(&app, &text).await;
+                let summary = summarize_with_bart(app, &text).await;
                 println!("[CC] Summary: {summary:?}");
 
-                // Compute transcript analytics (LIX, word count, reading time)
                 let lix = compute_lix(&text);
                 let (words, read_mins) = transcript_stats(&text);
                 let info = match lix {
@@ -632,45 +675,31 @@ pub async fn run_add_learning(
 
     // Priority: user override → video publish date → today
     let today = if !date_override.trim().is_empty() {
-        // Browser date inputs emit "YYYY-MM-DD"; reformat to "YYYY/MM/DD".
         NaiveDate::parse_from_str(date_override.trim(), "%Y-%m-%d")
             .map(|d| d.format("%Y/%m/%d").to_string())
             .unwrap_or_else(|_| date_override.trim().to_string())
     } else {
         meta.publish_date
-            .clone()
             .unwrap_or_else(|| Local::now().format("%Y/%m/%d").to_string())
     };
 
-    let analytics_line = match &transcript_info {
-        Some(info) => format!("{info}\n"),
-        None => String::new(),
-    };
+    finish_add_learning(app, url, &title, hours, minutes, &today, &description, transcript_info).await
+}
 
-    let summary = format!(
-        "\n{sep}\n  YourLearning — Add Personal Learning\n{sep}\n  Title:    {title}\n  URL:      {url}\n  Duration: {hours}h {minutes}m\n  Date:     {today}\n{sep}\n{analytics_line}",
-        sep = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    );
+// ── Public command (router) ───────────────────────────────────────────────────
 
-    // ── Start relay server ───────────────────────────────────────────────────
-    let json_body = serde_json::json!({
-        "title": title,
-        "url": url,
-        "description": description,
-        "today": today,
-        "hours": hours,
-        "minutes": minutes,
-    })
-    .to_string();
+#[tauri::command]
+pub async fn run_add_learning(
+    app: tauri::AppHandle,
+    url: String,
+    date_override: String,
+    use_ai_summary: bool,
+) -> Result<String, String> {
+    let url = url.trim().to_string();
 
-    run_relay(&app, json_body).await?;
-
-    // ── Open YourLearning in the user's default browser ──────────────────────
-    app.opener()
-        .open_url(YOURLEARNING_URL, None::<&str>)
-        .map_err(|e| format!("Failed to open browser: {e}"))?;
-
-    Ok(format!(
-        "{summary}✓ Browser opened — the extension will fill the form automatically."
-    ))
+    if url.contains("youtube.com/watch") || url.contains("youtu.be/") {
+        run_youtube(&app, &url, &date_override, use_ai_summary).await
+    } else {
+        super::article_learning::run_article(&app, &url, &date_override, use_ai_summary).await
+    }
 }
