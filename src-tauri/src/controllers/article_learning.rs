@@ -172,11 +172,13 @@ fn extract_body_text(html: &str) -> String {
             Some(i) => pos + i,
             None => break,
         };
-        // Ensure it's actually a <p> or <p …> tag, not e.g. <pre>.
+        // Ensure it's actually a <p>, <p …>, or <p\n> tag and not e.g. <pre>, <path>.
+        // Valid continuations after "<p": whitespace, ">", or "/" (self-closing).
+        // Anything else (a letter like 'r' in <pre> or 'a' in <path>) means a different tag.
         let after_p = p_start + 2;
         if after_p < lower.len() {
-            let next_ch = lower.as_bytes()[after_p] as char;
-            if next_ch != '>' && next_ch != ' ' && next_ch != '\t' && next_ch != '\n' && next_ch != '\r' {
+            let next_ch = lower.as_bytes()[after_p];
+            if next_ch.is_ascii_alphabetic() {
                 pos = after_p;
                 continue;
             }
