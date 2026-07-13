@@ -17,13 +17,13 @@ TAG="v$VERSION"
 echo "→ Bumping version to $VERSION"
 
 # Cargo.toml (root)
-sed -i'' -e "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
+sed -i '' "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
 
 # src-tauri/Cargo.toml
-sed -i'' -e "s/^version = \".*\"/version = \"$VERSION\"/" src-tauri/Cargo.toml
+sed -i '' "s/^version = \".*\"/version = \"$VERSION\"/" src-tauri/Cargo.toml
 
 # src-tauri/tauri.conf.json
-sed -i'' -e "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" src-tauri/tauri.conf.json
+sed -i '' "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" src-tauri/tauri.conf.json
 
 echo "→ Committing version bump"
 git add Cargo.toml src-tauri/Cargo.toml src-tauri/tauri.conf.json
