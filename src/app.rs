@@ -369,24 +369,33 @@ fn HelpTab() -> Element {
     rsx! {
         div { class: "help",
 
-            h3 { "How to add a YouTube video to YourLearning" }
+            h3 { "How to add a learning to YourLearning" }
+
+            p {
+                "The app supports "
+                strong { "YouTube videos" }
+                " and "
+                strong { "articles / web pages" }
+                ". Paste any URL and the app will extract the relevant metadata automatically."
+            }
 
             ol { class: "help-steps",
                 li {
                     strong { "Paste the URL. " }
-                    "Copy a YouTube video URL and paste it into the "
+                    "Copy the URL of a YouTube video or any article/web page and paste it into the "
                     em { "Add Learning" }
                     " tab."
                 }
                 li {
                     strong { "Date (optional). " }
-                    "The app uses the video's original publish date automatically. "
-                    "If you want a different date — for example, the day you actually watched it — "
+                    "For YouTube videos the publish date is pre-filled automatically. "
+                    "For articles the date defaults to today. "
+                    "If you want a different date — for example, the day you actually read or watched it — "
                     "click the date field and pick one."
                 }
                 li {
                     strong { "Click Add Learning. " }
-                    "The app fetches the video's title, duration, and description, "
+                    "The app fetches the title, duration or reading time, and a description, "
                     "then opens "
                     span { class: "mono", "yourlearning.ibm.com/add-learning" }
                     " in your browser."
@@ -413,13 +422,14 @@ fn HelpTab() -> Element {
             div { class: "faq-item",
                 p { class: "faq-q", "The duration shows 0h 0m." }
                 p { class: "faq-a",
-                    "Some videos (live streams, premieres) don't expose a duration until they finish processing. "
-                    "You can correct the value manually in the YourLearning form."
+                    "For YouTube videos, some content (live streams, premieres) doesn't expose a duration until it finishes processing. "
+                    "For articles, a reading-time estimate is used instead. "
+                    "You can correct either value manually in the YourLearning form."
                 }
             }
 
             div { class: "faq-item",
-                p { class: "faq-q", "Can I use a timestamp URL like ?v=abc&t=120s?" }
+                p { class: "faq-q", "Can I use a YouTube timestamp URL like ?v=abc&t=120s?" }
                 p { class: "faq-a",
                     "Yes — the app strips the timestamp and extra parameters automatically, "
                     "so the correct video is always looked up."
@@ -429,8 +439,18 @@ fn HelpTab() -> Element {
             div { class: "faq-item",
                 p { class: "faq-q", "The wrong date was pre-filled." }
                 p { class: "faq-a",
-                    "The date defaults to the video's YouTube publish date. "
+                    "For YouTube videos the date defaults to the video's publish date; "
+                    "for articles it defaults to today. "
                     "Use the optional date field on the Add Learning tab to override it."
+                }
+            }
+
+            div { class: "faq-item",
+                p { class: "faq-q", "The article title or description looks wrong." }
+                p { class: "faq-a",
+                    "The app extracts content from the page's HTML. "
+                    "Pages that require JavaScript to render, or that are behind a login, may not extract cleanly. "
+                    "You can edit any field directly in the YourLearning form before submitting."
                 }
             }
         }

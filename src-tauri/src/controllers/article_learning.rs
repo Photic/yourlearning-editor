@@ -265,7 +265,7 @@ pub(crate) async fn run_article(
 
     // ── Compute LIX / reading time (always, no token needed) ─────────────────
     let lix = compute_lix(&body_text);
-    let (words, read_mins) = transcript_stats(&body_text);
+    let (words, _) = transcript_stats(&body_text);
 
     // Duration for YourLearning = estimated reading time adjusted for difficulty.
     // Conservative: use the lower bound of each band's expected reading speed.

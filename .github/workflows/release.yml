@@ -56,10 +56,16 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "OWLS ${{ github.ref_name }}"
-          releaseBody: "See the assets below to download and install this version."
+          releaseBody: "See the assets below to download and install this version.\n\nSince I do not have a paid account for Apple applications. A small command need to be run after the application has been moved to the application folder.\n\n`xattr -cr /Applications/owls.app`\n\nSimilar work arounds might be required for other operation systems."
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}

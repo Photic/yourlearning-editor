@@ -6,7 +6,7 @@ use controllers::extension::{export_extension, open_extension_folder};
 use controllers::token::{
     get_hf_api_token, get_use_ai_summary, log_message, set_hf_api_token, set_use_ai_summary,
 };
-use controllers::youtube_learning::{run_add_learning, RelayState};
+use controllers::learning_entry::{run_add_learning, RelayState};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

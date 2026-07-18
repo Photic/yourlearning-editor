@@ -376,38 +376,6 @@ fn extract_json_string(html: &str, key: &str) -> Option<String> {
     Some(html[start..end].to_string())
 }
 
-/// Parses a yt-dlp json3 caption file into plain text.
-/// json3 format: { "events": [ { "segs": [ { "utf8": "text" } ] } ] }
-/// Events with "aAppend":1 are mid-word continuations — skip their leading newline.
-fn parse_json3_transcript(body: &str) -> Option<String> {
-    let json: serde_json::Value = serde_json::from_str(body).ok()?;
-    let events = json["events"].as_array()?;
-
-    let mut transcript = String::new();
-    for event in events {
-        // Skip window-config events (no segs)
-        let segs = match event["segs"].as_array() {
-            Some(s) => s,
-            None => continue,
-        };
-        for seg in segs {
-            if let Some(text) = seg["utf8"].as_str() {
-                // Replace newlines with spaces; yt-dlp uses \n as word separators
-                let text = text.replace('\n', " ");
-                let text = text.trim();
-                if !text.is_empty() {
-                    if !transcript.is_empty() {
-                        transcript.push(' ');
-                    }
-                    transcript.push_str(text);
-                }
-            }
-        }
-    }
-
-    if transcript.is_empty() { None } else { Some(transcript) }
-}
-
 /// Parses the timedtext format="3" XML returned by the YouTube player API.
 ///
 /// Two formats are encountered in the wild:
@@ -686,20 +654,13 @@ async fn run_youtube(
     finish_add_learning(app, url, &title, hours, minutes, &today, &description, transcript_info).await
 }
 
-// ── Public command (router) ───────────────────────────────────────────────────
+// ── YouTube-specific entry point (called by learning_entry) ──────────────────
 
-#[tauri::command]
-pub async fn run_add_learning(
-    app: tauri::AppHandle,
-    url: String,
-    date_override: String,
+pub(crate) async fn run_youtube_learning(
+    app: &tauri::AppHandle,
+    url: &str,
+    date_override: &str,
     use_ai_summary: bool,
 ) -> Result<String, String> {
-    let url = url.trim().to_string();
-
-    if url.contains("youtube.com/watch") || url.contains("youtu.be/") {
-        run_youtube(&app, &url, &date_override, use_ai_summary).await
-    } else {
-        super::article_learning::run_article(&app, &url, &date_override, use_ai_summary).await
-    }
+    run_youtube(app, url, date_override, use_ai_summary).await
 }
