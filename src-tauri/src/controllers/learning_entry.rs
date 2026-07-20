@@ -25,6 +25,9 @@ pub async fn run_add_learning(
     } else if is_rss_feed_url(&url) {
         println!("RSS Podcast Entry");
         super::rss_podcast_learning::run_rss_podcast(&app, &url, &date_override, use_ai_summary).await
+    } else if is_vimeo_url(&url) {
+        println!("Vimeo Entry");
+        super::vimeo_learning::run_vimeo(&app, &url, &date_override, use_ai_summary).await
     } else {
         println!("Default (Article) Entry");
         super::article_learning::run_article(&app, &url, &date_override, use_ai_summary).await
@@ -70,4 +73,13 @@ fn is_rss_feed_url(url: &str) -> bool {
     // Explicit .xml / .rss extension (strip query string first)
     let path = lower.split('?').next().unwrap_or(&lower);
     path.ends_with(".xml") || path.ends_with(".rss")
+}
+
+/// Returns true for vimeo.com watch pages and player.vimeo.com embed URLs.
+fn is_vimeo_url(url: &str) -> bool {
+    let lower = url.to_lowercase();
+    lower.contains("vimeo.com/")
+        && !lower.contains("vimeo.com/channels")
+        && !lower.contains("vimeo.com/groups")
+        && !lower.contains("vimeo.com/album")
 }

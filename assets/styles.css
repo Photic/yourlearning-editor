@@ -255,6 +255,52 @@ button {
   font-size: 0.95em;
 }
 
+.history-list {
+  width: 100%;
+  text-align: left;
+}
+
+.history-item {
+  border-top: 1px solid #e5e5e5;
+  padding: 0.65rem 0;
+}
+
+.history-title {
+  font-weight: 500;
+  margin-bottom: 0.2rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-title a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.history-title a:hover {
+  text-decoration: underline;
+  color: #396cd8;
+}
+
+.history-meta {
+  font-size: 0.85em;
+  color: #777;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.history-sep {
+  color: #ccc;
+}
+
+.history-empty {
+  color: #777;
+  font-size: 0.95em;
+  margin-top: 1.5rem;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     color: #f6f6f6;
@@ -310,5 +356,21 @@ button {
   .output {
     background: #1a1a1a;
     border-color: #444;
+  }
+
+  .history-item {
+    border-top-color: #444;
+  }
+
+  .history-meta {
+    color: #aaa;
+  }
+
+  .history-sep {
+    color: #555;
+  }
+
+  .history-empty {
+    color: #aaa;
   }
 }

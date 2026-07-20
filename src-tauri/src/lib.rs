@@ -4,7 +4,7 @@ mod controllers;
 use control::sqlite::SqliteState;
 use controllers::extension::{export_extension, open_extension_folder};
 use controllers::token::{
-    get_hf_api_token, get_use_ai_summary, log_message, set_hf_api_token, set_use_ai_summary,
+    get_hf_api_token, get_use_ai_summary, get_history, log_message, set_hf_api_token, set_use_ai_summary,
 };
 use controllers::learning_entry::{run_add_learning, RelayState};
 use tauri::Manager;
@@ -29,6 +29,7 @@ pub fn run() {
             set_hf_api_token,
             get_use_ai_summary,
             set_use_ai_summary,
+            get_history,
             log_message
         ])
         .run(tauri::generate_context!())

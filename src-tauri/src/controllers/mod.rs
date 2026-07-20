@@ -5,4 +5,5 @@ pub mod learning_entry;
 pub mod rss_podcast_learning;
 pub mod spotify_podcast_learning;
 pub mod token;
+pub mod vimeo_learning;
 pub mod youtube_learning;

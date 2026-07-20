@@ -31,11 +31,24 @@ struct SetUseAiSummaryArgs {
     value: bool,
 }
 
+#[derive(Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HistoryEntry {
+    id: i64,
+    url: String,
+    title: String,
+    hours: i64,
+    minutes: i64,
+    date: String,
+    added_at: String,
+}
+
 #[derive(Clone, PartialEq)]
 enum Tab {
     AddLearning,
     HfToken,
     Extension,
+    History,
     Help,
 }
 
@@ -68,6 +81,11 @@ pub fn App() -> Element {
                     "Install Extension"
                 }
                 button {
+                    class: if *active_tab.read() == Tab::History { "tab tab--active" } else { "tab" },
+                    onclick: move |_| active_tab.set(Tab::History),
+                    "History"
+                }
+                button {
                     class: if *active_tab.read() == Tab::Help { "tab tab--active" } else { "tab" },
                     onclick: move |_| active_tab.set(Tab::Help),
                     "Help"
@@ -84,6 +102,9 @@ pub fn App() -> Element {
                 },
                 Tab::Extension => rsx! {
                     ExtensionTab {}
+                },
+                Tab::History => rsx! {
+                    HistoryTab {}
                 },
                 Tab::Help => rsx! {
                     HelpTab {}
@@ -151,7 +172,7 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
 
     rsx! {
         p { class: "subtitle",
-            "Paste a YouTube or Article URL — the extension will auto-fill the form."
+            "Paste a YouTube, Vimeo, Podcast, or Article URL — the extension will auto-fill the form."
         }
 
         form { onsubmit: submit,
@@ -363,6 +384,56 @@ fn ExtensionTab() -> Element {
     }
 }
 
+// ── History tab ───────────────────────────────────────────────────────────────
+
+fn HistoryTab() -> Element {
+    let mut entries: Signal<Vec<HistoryEntry>> = use_signal(Vec::new);
+    let mut error = use_signal(|| String::new());
+
+    use_resource(move || async move {
+        let result = invoke("get_history", JsValue::NULL).await;
+        match serde_wasm_bindgen::from_value::<Vec<HistoryEntry>>(result) {
+            Ok(list) => entries.set(list),
+            Err(e) => error.set(format!("Could not load history: {e}")),
+        }
+    });
+
+    rsx! {
+        p { class: "subtitle", "Your last 50 learnings added via OWLS." }
+
+        if !error.read().is_empty() {
+            p { class: "status-msg", "{error}" }
+        }
+
+        if entries.read().is_empty() && error.read().is_empty() {
+            p { class: "history-empty", "No learnings recorded yet — add one from the Add Learning tab." }
+        }
+
+        if !entries.read().is_empty() {
+            div { class: "history-list",
+                for entry in entries.read().iter() {
+                    div { class: "history-item",
+                        div { class: "history-title",
+                            a {
+                                href: "{entry.url}",
+                                target: "_blank",
+                                rel: "noopener noreferrer",
+                                "{entry.title}"
+                            }
+                        }
+                        div { class: "history-meta",
+                            span { "{entry.date}" }
+                            span { class: "history-sep", "·" }
+                            span { "{entry.hours}h {entry.minutes}m" }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+
 // ── Help tab ──────────────────────────────────────────────────────────────────
 
 fn HelpTab() -> Element {
@@ -374,7 +445,11 @@ fn HelpTab() -> Element {
             p {
                 "The app supports "
                 strong { "YouTube videos" }
-                " and "
+                ", "
+                strong { "Vimeo videos" }
+                ", "
+                strong { "podcasts" }
+                " (Apple, Spotify, RSS), and "
                 strong { "articles / web pages" }
                 ". Paste any URL and the app will extract the relevant metadata automatically."
             }

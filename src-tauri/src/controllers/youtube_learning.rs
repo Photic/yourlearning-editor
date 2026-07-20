@@ -550,7 +550,8 @@ async fn serve_single(listener: TcpListener, body: String, content_type: &'stati
 // ── Helpers shared with other controllers ─────────────────────────────────────
 
 /// Formats the output block and analytics line, fires the relay, opens the
-/// browser and returns the displayable summary string.
+/// browser and returns the displayable summary string.  Also records the
+/// entry in the local SQLite history so it appears in the History tab.
 pub(crate) async fn finish_add_learning(
     app: &tauri::AppHandle,
     url: &str,
@@ -586,6 +587,11 @@ pub(crate) async fn finish_add_learning(
     app.opener()
         .open_url(YOURLEARNING_URL, None::<&str>)
         .map_err(|e| format!("Failed to open browser: {e}"))?;
+
+    // Record in history (best-effort — don't fail the whole flow if this errors).
+    if let Ok(sqlite) = app.try_state::<SqliteState>().ok_or("no state") {
+        let _ = sqlite.add_history(url, title, hours, minutes, today);
+    }
 
     Ok(format!(
         "{summary}✓ Browser opened — the extension will fill the form automatically."
