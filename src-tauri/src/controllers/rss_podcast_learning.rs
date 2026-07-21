@@ -195,13 +195,18 @@ pub(crate) async fn run_rss_podcast(
     };
 
     // ── Optionally summarise ──────────────────────────────────────────────────
+    let mut hf_warning: Option<String> = None;
     let description = if use_ai_summary
         && hf_api_token(app).is_some()
         && !text_for_summary.is_empty()
     {
-        let summary = summarize_with_bart(app, &text_for_summary).await;
-        println!("[RSS] Summary: {summary:?}");
-        summary.unwrap_or(text_for_summary.clone())
+        let summary_result = summarize_with_bart(app, &text_for_summary).await;
+        println!("[RSS] Summary: {summary_result:?}");
+        match summary_result {
+            Ok(Some(s)) => s,
+            Ok(None) => text_for_summary.clone(),
+            Err(e) => { hf_warning = Some(e); text_for_summary.clone() }
+        }
     } else {
         text_for_summary.clone()
     };
@@ -212,13 +217,15 @@ pub(crate) async fn run_rss_podcast(
     } else {
         let (words, read_mins) = transcript_stats(&text_for_summary);
         let lix = compute_lix(&text_for_summary);
-        Some(match lix {
+        let mut info = match lix {
             Some(score) => format!(
                 "  Description: {} words  |  ~{} min read\n  LIX score:   {:.1} — {}",
                 words, read_mins, score, lix_label(score)
             ),
             None => format!("  Description: {} words  |  ~{} min read", words, read_mins),
-        })
+        };
+        if let Some(w) = hf_warning { info.push_str(&format!("\n  ⚠ AI summary: {w}")); }
+        Some(info)
     };
 
     finish_add_learning(app, url, &title, hours, minutes, &date, &description, transcript_info)

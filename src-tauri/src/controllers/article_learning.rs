@@ -282,10 +282,15 @@ pub(crate) async fn run_article(
     let (hours, minutes) = (total_read_mins / 60, total_read_mins % 60);
 
     // ── Optionally summarise ─────────────────────────────────────────────────
+    let mut hf_warning: Option<String> = None;
     let description = if use_ai_summary && hf_api_token(app).is_some() {
-        let summary = summarize_with_bart(app, &body_text).await;
-        println!("[Article] Summary: {summary:?}");
-        summary.unwrap_or_default()
+        let summary_result = summarize_with_bart(app, &body_text).await;
+        println!("[Article] Summary: {summary_result:?}");
+        match summary_result {
+            Ok(Some(s)) => s,
+            Ok(None) => String::new(),
+            Err(e) => { hf_warning = Some(e); String::new() }
+        }
     } else {
         String::new()
     };
@@ -293,13 +298,15 @@ pub(crate) async fn run_article(
     // ── Analytics line ───────────────────────────────────────────────────────
     // Use the same adjusted reading time that was sent to YourLearning.
     let display_mins = total_read_mins;
-    let transcript_info = Some(match lix {
+    let mut transcript_info_str = match lix {
         Some(score) => format!(
             "  Article:     {} words  |  ~{} min read (@ {}wpm)\n  LIX score:   {:.1} — {}",
             words, display_mins, wpm, score, lix_label(score)
         ),
         None => format!("  Article:     {} words  |  ~{} min read", words, display_mins),
-    });
+    };
+    if let Some(w) = hf_warning { transcript_info_str.push_str(&format!("\n  ⚠ AI summary: {w}")); }
+    let transcript_info = Some(transcript_info_str);
 
     // ── Date ─────────────────────────────────────────────────────────────────
     let today = if !date_override.trim().is_empty() {

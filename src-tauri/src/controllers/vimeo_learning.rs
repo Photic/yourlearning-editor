@@ -99,10 +99,15 @@ pub(crate) async fn run_vimeo(
     };
 
     // Optionally summarise the description
+    let mut hf_warning: Option<String> = None;
     let description = if !meta.description.is_empty() && use_ai_summary && hf_api_token(app).is_some() {
-        let summary = summarize_with_bart(app, &meta.description).await;
-        println!("[Vimeo] Summary: {summary:?}");
-        summary.unwrap_or(meta.description.clone())
+        let summary_result = summarize_with_bart(app, &meta.description).await;
+        println!("[Vimeo] Summary: {summary_result:?}");
+        match summary_result {
+            Ok(Some(s)) => s,
+            Ok(None) => meta.description.clone(),
+            Err(e) => { hf_warning = Some(e); meta.description.clone() }
+        }
     } else {
         meta.description.clone()
     };
@@ -112,13 +117,15 @@ pub(crate) async fn run_vimeo(
     } else {
         let (words, read_mins) = transcript_stats(&meta.description);
         let lix = compute_lix(&meta.description);
-        Some(match lix {
+        let mut info = match lix {
             Some(score) => format!(
                 "  Description: {} words  |  ~{} min read\n  LIX score:   {:.1} — {}",
                 words, read_mins, score, lix_label(score)
             ),
             None => format!("  Description: {} words  |  ~{} min read", words, read_mins),
-        })
+        };
+        if let Some(w) = hf_warning { info.push_str(&format!("\n  ⚠ AI summary: {w}")); }
+        Some(info)
     };
 
     finish_add_learning(app, url, &title, hours, minutes, &date, &description, transcript_info).await

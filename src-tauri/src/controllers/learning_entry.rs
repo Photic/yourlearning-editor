@@ -13,6 +13,12 @@ pub async fn run_add_learning(
 ) -> Result<String, String> {
     let url = url.trim().to_string();
 
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Err(
+            "Please paste a full URL starting with https://\n\nSupported sources:\n  • YouTube       youtube.com/watch or youtu.be\n  • Apple Podcast podcasts.apple.com\n  • Spotify       open.spotify.com/episode\n  • Vimeo         vimeo.com\n  • RSS feed      .xml / .rss or known feed hosts\n  • Article       any other https:// page".to_string()
+        );
+    }
+
     if url.contains("youtube.com/watch") || url.contains("youtu.be/") {
         println!("Youtube Entry");
         super::youtube_learning::run_youtube_learning(&app, &url, &date_override, use_ai_summary).await

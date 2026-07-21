@@ -115,18 +115,27 @@ pub(crate) fn hf_api_token(app: &tauri::AppHandle) -> Option<String> {
 }
 
 /// Calls the Hugging Face Inference API to summarise `text` using
-/// facebook/bart-large-cnn.  Returns `None` on any error or if no token
-/// is available.
+/// facebook/bart-large-cnn.
+///
+/// Returns:
+/// - `Ok(None)`       — no HF token configured, summary skipped.
+/// - `Ok(Some(text))` — summary produced successfully.
+/// - `Err(msg)`       — token present but the request failed (network error,
+///                      timeout, unexpected response).  `msg` is a short
+///                      human-readable description suitable for display.
 ///
 /// Handles the HF cold-start case: if the model is still loading the API
 /// returns `{"error":"Loading…","estimated_time":<secs>}`.  We honour that
 /// delay and retry once with `wait_for_model: true`.
-pub(crate) async fn summarize_with_bart(app: &tauri::AppHandle, text: &str) -> Option<String> {
+pub(crate) async fn summarize_with_bart(
+    app: &tauri::AppHandle,
+    text: &str,
+) -> Result<Option<String>, String> {
     let token = match hf_api_token(app) {
         Some(t) => t,
         None => {
             println!("[HF] HF_API_TOKEN not set in environment or .env — skipping summary.");
-            return None;
+            return Ok(None);
         }
     };
 
@@ -135,9 +144,9 @@ pub(crate) async fn summarize_with_bart(app: &tauri::AppHandle, text: &str) -> O
 
     let client = reqwest::Client::builder()
         .user_agent("yourlearning-editor")
-        .timeout(std::time::Duration::from_secs(60))
+        .timeout(std::time::Duration::from_secs(15))
         .build()
-        .ok()?;
+        .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
 
     // First attempt — fast path (model already warm).
     let raw = client
@@ -146,17 +155,18 @@ pub(crate) async fn summarize_with_bart(app: &tauri::AppHandle, text: &str) -> O
         .json(&serde_json::json!({ "inputs": input }))
         .send()
         .await
-        .map_err(|e| println!("[HF] Request failed: {e}"))
-        .ok()?
+        .map_err(|e| {
+            println!("[HF] Request failed: {e}");
+            "Connection to HuggingFace failed. Please try again.".to_string()
+        })?
         .text()
         .await
-        .ok()?;
+        .map_err(|e| format!("Failed to read HF response: {e}"))?;
 
     println!("[HF] Response: {}", &raw[..raw.len().min(200)]);
 
     let value: serde_json::Value = serde_json::from_str(&raw)
-        .map_err(|e| println!("[HF] JSON parse error: {e}"))
-        .ok()?;
+        .map_err(|e| format!("HF returned unexpected response: {e}"))?;
 
     // Model still loading? Wait the suggested delay then retry with
     // wait_for_model so the server blocks until it's ready.
@@ -172,20 +182,31 @@ pub(crate) async fn summarize_with_bart(app: &tauri::AppHandle, text: &str) -> O
             .json(&serde_json::json!({ "inputs": input }))
             .send()
             .await
-            .map_err(|e| println!("[HF] Retry request failed: {e}"))
-            .ok()?
+            .map_err(|e| {
+                println!("[HF] Retry request failed: {e}");
+                "Connection to HuggingFace failed. Please try again.".to_string()
+            })?
             .text()
             .await
-            .ok()?;
+            .map_err(|e| format!("Failed to read HF retry response: {e}"))?;
 
         println!("[HF] Retry response: {}", &raw2[..raw2.len().min(200)]);
 
-        let value2: serde_json::Value = serde_json::from_str(&raw2).ok()?;
-        return value2.get(0)?.get("summary_text")?.as_str().map(|s| s.trim().to_string());
+        let value2: serde_json::Value = serde_json::from_str(&raw2)
+            .map_err(|e| format!("HF retry returned unexpected response: {e}"))?;
+        return Ok(value2
+            .get(0)
+            .and_then(|v| v.get("summary_text"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string()));
     }
 
     // Successful response: [{"summary_text": "..."}]
-    value.get(0)?.get("summary_text")?.as_str().map(|s| s.trim().to_string())
+    Ok(value
+        .get(0)
+        .and_then(|v| v.get("summary_text"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string()))
 }
 
 // ── Transcript analytics ──────────────────────────────────────────────────────
@@ -620,12 +641,12 @@ async fn run_youtube(
         match transcript {
             Some(text) => {
                 println!("[CC] Transcript ({} chars):\n{text}\n", text.len());
-                let summary = summarize_with_bart(app, &text).await;
-                println!("[CC] Summary: {summary:?}");
+                let summary_result = summarize_with_bart(app, &text).await;
+                println!("[CC] Summary: {summary_result:?}");
 
                 let lix = compute_lix(&text);
                 let (words, read_mins) = transcript_stats(&text);
-                let info = match lix {
+                let mut info = match lix {
                     Some(score) => format!(
                         "  Transcript:  {} words  |  ~{} min read\n  LIX score:   {:.1} — {}",
                         words, read_mins, score, lix_label(score)
@@ -636,7 +657,16 @@ async fn run_youtube(
                     ),
                 };
 
-                (summary.unwrap_or_default(), Some(info))
+                let description = match summary_result {
+                    Ok(Some(s)) => s,
+                    Ok(None) => String::new(),
+                    Err(e) => {
+                        info.push_str(&format!("\n  ⚠ AI summary: {e}"));
+                        String::new()
+                    }
+                };
+
+                (description, Some(info))
             }
             None => {
                 println!("[CC] No captions found (yt-dlp not installed or video has no CC)");

@@ -257,15 +257,23 @@ pub(crate) async fn run_apple_podcast(
             };
 
             // Optionally summarise the episode description
+            let mut hf_warning: Option<String> = None;
             let description = if use_ai_summary && hf_api_token(app).is_some() && !ep_desc.is_empty() {
-                let summary = summarize_with_bart(app, &ep_desc).await;
-                println!("[Apple] Summary: {summary:?}");
-                summary.unwrap_or(ep_desc.clone())
+                let summary_result = summarize_with_bart(app, &ep_desc).await;
+                println!("[Apple] Summary: {summary_result:?}");
+                match summary_result {
+                    Ok(Some(s)) => s,
+                    Ok(None) => ep_desc.clone(),
+                    Err(e) => { hf_warning = Some(e); ep_desc.clone() }
+                }
             } else {
                 ep_desc.clone()
             };
 
-            let transcript_info = build_transcript_info(&ep_desc);
+            let transcript_info = build_transcript_info(&ep_desc).map(|mut info| {
+                if let Some(w) = hf_warning { info.push_str(&format!("\n  ⚠ AI summary: {w}")); }
+                info
+            });
 
             return finish_add_learning(
                 app, url, &title, hours, minutes, &date, &description, transcript_info,
@@ -300,15 +308,23 @@ pub(crate) async fn run_apple_podcast(
         Local::now().format("%Y/%m/%d").to_string()
     };
 
+    let mut hf_warning: Option<String> = None;
     let description = if use_ai_summary && hf_api_token(app).is_some() && !show_desc.is_empty() {
-        let summary = summarize_with_bart(app, &show_desc).await;
-        println!("[Apple] Summary: {summary:?}");
-        summary.unwrap_or(show_desc.clone())
+        let summary_result = summarize_with_bart(app, &show_desc).await;
+        println!("[Apple] Summary: {summary_result:?}");
+        match summary_result {
+            Ok(Some(s)) => s,
+            Ok(None) => show_desc.clone(),
+            Err(e) => { hf_warning = Some(e); show_desc.clone() }
+        }
     } else {
         show_desc.clone()
     };
 
-    let transcript_info = build_transcript_info(&show_desc);
+    let transcript_info = build_transcript_info(&show_desc).map(|mut info| {
+        if let Some(w) = hf_warning { info.push_str(&format!("\n  ⚠ AI summary: {w}")); }
+        info
+    });
 
     finish_add_learning(app, url, &title, hours, minutes, &date, &description, transcript_info).await
 }
