@@ -10,6 +10,7 @@ pub struct SqliteState {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct HistoryEntry {
     pub id: i64,
     pub url: String,

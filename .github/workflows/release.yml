@@ -56,6 +56,10 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No Apple Developer certificate — users run `xattr -cr /Applications/owls.app`
+          # Setting APPLE_SIGNING_IDENTITY to "-" uses ad-hoc signing and skips the
+          # `security import` step that fails on macOS 14 runners when no cert is present.
+          APPLE_SIGNING_IDENTITY: ${{ matrix.platform == 'macos-latest' && '-' || '' }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "OWLS ${{ github.ref_name }}"
