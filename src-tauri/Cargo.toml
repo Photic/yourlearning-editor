@@ -1,6 +1,6 @@
 [package]
 name = "owls"
-version = "0.1.8"
+version = "0.1.9"
 description = "Organised Workflow for Loading & Saving"
 authors = ["Steen René Hansen"]
 edition = "2021"
