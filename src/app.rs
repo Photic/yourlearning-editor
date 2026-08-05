@@ -1,9 +1,9 @@
 #![allow(non_snake_case)]
 
 use dioxus::prelude::*;
+use js_sys;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
-use js_sys;
 
 static CSS: Asset = asset!("/assets/styles.css");
 
@@ -134,12 +134,21 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
     let mut is_running = use_signal(|| false);
 
     use_resource(move || async move {
-        let token_result = wasm_bindgen_futures::JsFuture::from(invoke("get_hf_api_token", JsValue::NULL)).await.ok();
-        let token = token_result.as_ref().and_then(|v| v.as_string()).filter(|s| !s.trim().is_empty());
+        let token_result =
+            wasm_bindgen_futures::JsFuture::from(invoke("get_hf_api_token", JsValue::NULL))
+                .await
+                .ok();
+        let token = token_result
+            .as_ref()
+            .and_then(|v| v.as_string())
+            .filter(|s| !s.trim().is_empty());
         let has_token = token.is_some();
         has_hf_token.set(has_token);
 
-        let use_ai_result = wasm_bindgen_futures::JsFuture::from(invoke("get_use_ai_summary", JsValue::NULL)).await.ok();
+        let use_ai_result =
+            wasm_bindgen_futures::JsFuture::from(invoke("get_use_ai_summary", JsValue::NULL))
+                .await
+                .ok();
         use_ai_summary.set(use_ai_result.and_then(|v| v.as_bool()).unwrap_or(has_token));
     });
 
@@ -166,7 +175,9 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
         let result = wasm_bindgen_futures::JsFuture::from(invoke("run_add_learning", args)).await;
         let msg = match result {
             Ok(v) => v.as_string().unwrap_or_else(|| "Done.".to_string()),
-            Err(e) => e.as_string().unwrap_or_else(|| "An unexpected error occurred.".to_string()),
+            Err(e) => e
+                .as_string()
+                .unwrap_or_else(|| "An unexpected error occurred.".to_string()),
         };
         output.set(msg);
 
@@ -222,19 +233,41 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
                         spawn(async move {
                             if !event.checked() {
                                 use_ai_summary.set(false);
-                                let args = serde_wasm_bindgen::to_value(&SetUseAiSummaryArgs { value: false }).unwrap();
-                                let _ = wasm_bindgen_futures::JsFuture::from(invoke("set_use_ai_summary", args)).await;
+                                let args = serde_wasm_bindgen::to_value(
+                                        &SetUseAiSummaryArgs {
+                                            value: false,
+                                        },
+                                    )
+                                    .unwrap();
+                                let _ = wasm_bindgen_futures::JsFuture::from(
+                                        invoke("set_use_ai_summary", args),
+                                    )
+                                    .await;
                                 return;
                             }
                             if *has_hf_token.read() {
                                 use_ai_summary.set(true);
-                                let args = serde_wasm_bindgen::to_value(&SetUseAiSummaryArgs { value: true }).unwrap();
-                                let _ = wasm_bindgen_futures::JsFuture::from(invoke("set_use_ai_summary", args)).await;
+                                let args = serde_wasm_bindgen::to_value(
+                                        &SetUseAiSummaryArgs { value: true },
+                                    )
+                                    .unwrap();
+                                let _ = wasm_bindgen_futures::JsFuture::from(
+                                        invoke("set_use_ai_summary", args),
+                                    )
+                                    .await;
                                 return;
                             }
                             use_ai_summary.set(false);
-                            let args = serde_wasm_bindgen::to_value(&SetUseAiSummaryArgs { value: false }).unwrap();
-                            let _ = wasm_bindgen_futures::JsFuture::from(invoke("set_use_ai_summary", args)).await;
+                            let args = serde_wasm_bindgen::to_value(
+                                    &SetUseAiSummaryArgs {
+                                        value: false,
+                                    },
+                                )
+                                .unwrap();
+                            let _ = wasm_bindgen_futures::JsFuture::from(
+                                    invoke("set_use_ai_summary", args),
+                                )
+                                .await;
                             active_tab.set(Tab::HfToken);
                         });
                     },
@@ -258,7 +291,10 @@ fn HfTokenTab() -> Element {
     let mut is_saving = use_signal(|| false);
 
     use_resource(move || async move {
-        let result = wasm_bindgen_futures::JsFuture::from(invoke("get_hf_api_token", JsValue::NULL)).await.ok();
+        let result =
+            wasm_bindgen_futures::JsFuture::from(invoke("get_hf_api_token", JsValue::NULL))
+                .await
+                .ok();
         token.set(result.and_then(|v| v.as_string()).unwrap_or_default());
     });
 
@@ -274,7 +310,10 @@ fn HfTokenTab() -> Element {
         let result = wasm_bindgen_futures::JsFuture::from(invoke("set_hf_api_token", args)).await;
 
         match result {
-            Err(e) => status.set(format!("Error: {}", e.as_string().unwrap_or_else(|| "unknown".to_string()))),
+            Err(e) => status.set(format!(
+                "Error: {}",
+                e.as_string().unwrap_or_else(|| "unknown".to_string())
+            )),
             _ => status.set("✓ HF token saved locally.".to_string()),
         }
 
@@ -324,11 +363,19 @@ fn ExtensionTab() -> Element {
         is_busy.set(true);
         status.set(String::new());
 
-        let result = wasm_bindgen_futures::JsFuture::from(invoke("open_extension_folder", JsValue::NULL)).await;
+        let result =
+            wasm_bindgen_futures::JsFuture::from(invoke("open_extension_folder", JsValue::NULL))
+                .await;
 
         match result {
-            Err(e) => status.set(format!("Error: {}", e.as_string().unwrap_or_else(|| "unknown".to_string()))),
-            _ => status.set("✓ Extension folder opened. Follow the steps below to load it in Chrome.".to_string()),
+            Err(e) => status.set(format!(
+                "Error: {}",
+                e.as_string().unwrap_or_else(|| "unknown".to_string())
+            )),
+            _ => status.set(
+                "✓ Extension folder opened. Follow the steps below to load it in Chrome."
+                    .to_string(),
+            ),
         }
 
         is_busy.set(false);
@@ -385,7 +432,10 @@ fn HistoryTab() -> Element {
                 Ok(list) => entries.set(list),
                 Err(e) => error.set(format!("Could not load history: {e}")),
             },
-            Err(e) => error.set(format!("Could not load history: {}", e.as_string().unwrap_or_else(|| "unknown".to_string()))),
+            Err(e) => error.set(format!(
+                "Could not load history: {}",
+                e.as_string().unwrap_or_else(|| "unknown".to_string())
+            )),
         }
     });
 
@@ -397,7 +447,9 @@ fn HistoryTab() -> Element {
         }
 
         if entries.read().is_empty() && error.read().is_empty() {
-            p { class: "history-empty", "No learnings recorded yet — add one from the Add Learning tab." }
+            p { class: "history-empty",
+                "No learnings recorded yet — add one from the Add Learning tab."
+            }
         }
 
         if !entries.read().is_empty() {
@@ -423,7 +475,6 @@ fn HistoryTab() -> Element {
         }
     }
 }
-
 
 // ── Help tab ──────────────────────────────────────────────────────────────────
 

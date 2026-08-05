@@ -273,15 +273,29 @@ pub(crate) fn split_duration(secs: u64) -> (u64, u64) {
     (secs / 3600, (secs % 3600) / 60)
 }
 
+/// Extracts the YouTube video ID from either format:
+/// - `https://www.youtube.com/watch?v=VIDEO_ID`
+/// - `https://youtu.be/VIDEO_ID`
+fn extract_video_id(url: &str) -> Option<String> {
+    if let Some(rest) = url.split("v=").nth(1) {
+        // Standard watch URL: take everything up to the next '&'
+        return Some(rest.split('&').next()?.to_string());
+    }
+    if let Some(rest) = url.split("youtu.be/").nth(1) {
+        // Short URL: video ID is the path segment before any '?' or '&'
+        return Some(rest.split(|c| c == '?' || c == '&').next()?.to_string());
+    }
+    None
+}
+
+
 /// Fetches captions by replicating yt-dlp's approach:
 /// 1. Fetch the watch page to extract visitorData and INNERTUBE_API_KEY
 /// 2. POST to /youtubei/v1/player using the Android VR client identity
 ///    (this is the only client that reliably returns a working timedtext URL)
 /// 3. Fetch the timedtext URL from the player response
 async fn fetch_captions(video_url: &str) -> Option<String> {
-    let video_id = video_url.split("v=").nth(1)
-        .and_then(|s| s.split('&').next())?
-        .to_string();
+    let video_id = extract_video_id(video_url)?;
 
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.5 Safari/605.1.15,gzip(gfe)")
