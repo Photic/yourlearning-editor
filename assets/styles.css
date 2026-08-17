@@ -14,14 +14,20 @@
   -webkit-text-size-adjust: 100%;
 }
 
+/* Chrome sizes the popup window from `body`'s own rendered box, not from a
+   centered child's — `body` is normal block flow, so with no width of its
+   own it simply fills whatever (large) viewport Chrome uses to measure the
+   popup, and a centered-but-narrower `.container` just floats in the middle
+   of that with empty space either side. The fixed width has to live here,
+   directly on `body`, for the popup window itself to end up that size. */
 html,
 body {
   margin: 0;
+  width: 400px;
 }
 
 .container {
-  margin: 0 auto;
-  max-width: 720px;
+  width: 100%;
   min-height: 480px;
   padding: 1.5rem 1.5rem 2rem;
   display: flex;
@@ -31,9 +37,14 @@ body {
   box-sizing: border-box;
 }
 
-/* Add Learning's content is short and fixed, so the popup auto-sizes to fit
-   it exactly with no scrollbar. History and Help can grow much longer, so
-   they cap the popup's height and scroll internally instead. */
+/* All three tabs here can grow past a comfortable popup height (Add Learning
+   once the focus-page row/AI-consent prompt/last-entry summary are all
+   showing at once; History and Help from their own list/prose length), so
+   they cap the popup's height and scroll internally instead of letting a
+   native document scrollbar appear — that scrollbar eats its width out of
+   the fixed-width popup asymmetrically, off just the right edge. HF Token's
+   content stays short and fixed, so it's left to auto-size with no
+   scrollbar. */
 .container--scrollable {
   max-height: 600px;
   overflow-y: auto;
@@ -99,6 +110,24 @@ form {
   color: #555;
   width: 100%;
   flex-wrap: wrap;
+}
+
+.focus-page-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 1rem;
+  width: 100%;
+}
+
+.focus-page-divider {
+  font-size: 0.85em;
+  color: #999;
+}
+
+.focus-page-hint {
+  font-size: 0.85em;
+  color: #555;
 }
 
 .checkbox-row {
@@ -400,6 +429,10 @@ button {
   }
 
   .date-row {
+    color: #aaa;
+  }
+
+  .focus-page-hint {
     color: #aaa;
   }
 

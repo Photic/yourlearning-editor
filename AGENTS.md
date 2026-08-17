@@ -17,6 +17,10 @@ This file provides context for any AI agent working on this project. **Keep it u
 - Vimeo (`vimeo.com/`)
 - RSS/podcast feeds (well-known feed hosts, `/feed`, `.rss`, `.xml`)
 - Articles (any other `https://` URL)
+- **Focus page** — instead of pasting a URL, the "Add Page Learning" button in
+  the popup reads the DOM of the browser's currently active tab (only on that
+  explicit click — never passively) and interprets its rendered text as the
+  learning entry. Requires the `scripting` extension permission.
 
 ---
 

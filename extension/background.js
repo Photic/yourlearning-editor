@@ -6,22 +6,38 @@
 // as long as there's pending work (a pending fetch, a pending message
 // response), so a task keeps running even if the popup gets closed mid-flight.
 
-import init, { run_add_learning } from "./background_wasm.js";
+import init, { run_add_learning, run_focus_page_learning } from "./background_wasm.js";
 
 const ready = init();
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type !== "add_learning") return false;
+  if (message?.type === "add_learning") {
+    (async () => {
+      await ready;
+      try {
+        await run_add_learning(message.url, message.dateOverride, message.useAiSummary);
+        sendResponse({ ok: true });
+      } catch (error) {
+        sendResponse({ ok: false, message: String(error) });
+      }
+    })();
 
-  (async () => {
-    await ready;
-    try {
-      await run_add_learning(message.url, message.dateOverride, message.useAiSummary);
-      sendResponse({ ok: true });
-    } catch (error) {
-      sendResponse({ ok: false, message: String(error) });
-    }
-  })();
+    return true; // keep the message channel open for the async sendResponse above
+  }
 
-  return true; // keep the message channel open for the async sendResponse above
+  if (message?.type === "add_focus_page_learning") {
+    (async () => {
+      await ready;
+      try {
+        await run_focus_page_learning(message.dateOverride, message.useAiSummary);
+        sendResponse({ ok: true });
+      } catch (error) {
+        sendResponse({ ok: false, message: String(error) });
+      }
+    })();
+
+    return true; // keep the message channel open for the async sendResponse above
+  }
+
+  return false;
 });

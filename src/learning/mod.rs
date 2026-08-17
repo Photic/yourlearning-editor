@@ -1,6 +1,7 @@
 mod apple_podcast;
 mod article;
 mod common;
+mod focus_page_learning;
 mod rss_podcast;
 mod spotify_podcast;
 mod vimeo;
@@ -40,6 +41,13 @@ pub async fn run_add_learning(url: &str, date_override: &str, use_ai_summary: bo
         tracing::debug!("Default (Article) Entry");
         article::run_article(&url, date_override, use_ai_summary).await
     }
+}
+
+/// Reads the browser's currently active tab and interprets its rendered
+/// text as a learning entry. Unlike `run_add_learning`, there's no URL to
+/// route on — the source is whatever page the user is already looking at.
+pub async fn run_focus_page_learning(date_override: &str, use_ai_summary: bool) -> Result<(), String> {
+    focus_page_learning::run_focus_page_learning(date_override, use_ai_summary).await
 }
 
 /// Returns true if the URL looks like a direct podcast RSS feed rather than a

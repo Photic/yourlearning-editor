@@ -20,12 +20,7 @@ pub fn App() -> Element {
 
     rsx! {
         link { rel: "stylesheet", href: CSS }
-        main {
-            class: if matches!(*active_tab.read(), Tab::History | Tab::Help) {
-                "container container--scrollable"
-            } else {
-                "container"
-            },
+        main { class: if matches!(*active_tab.read(), Tab::AddLearning | Tab::History | Tab::Help) { "container container--scrollable" } else { "container" },
             h1 { "Steen's OWLS" }
             h5 { "Organising Web Links & Summaries" }
 
@@ -93,6 +88,7 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
     let mut error = use_signal(|| String::new());
     let mut last_entry: Signal<Option<HistoryEntry>> = use_signal(|| None);
     let mut is_running = use_signal(|| false);
+    let mut confirming_ai_send = use_signal(|| false);
 
     let refresh_last_entry = move || async move {
         if let Ok(mut entries) = storage::get_history(1).await {
@@ -128,6 +124,28 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
 
         let result = crate::browser::run_add_learning_in_background(
             &url_val,
+            date_override.read().trim(),
+            *use_ai_summary.read(),
+        )
+        .await;
+
+        match result {
+            Ok(_) => refresh_last_entry().await,
+            Err(e) => error.set(e),
+        }
+
+        is_running.set(false);
+    };
+
+    // Reads the browser's currently active tab and interprets it as a
+    // learning entry — the alternative to pasting a URL above. Callable from
+    // multiple onclick handlers below (the button itself, and the AI-consent
+    // confirmation's "Send" action) since it only closes over `Copy` signals.
+    let run_focus_page = move || async move {
+        is_running.set(true);
+        error.set(String::new());
+
+        let result = crate::browser::run_focus_page_learning_in_background(
             date_override.read().trim(),
             *use_ai_summary.read(),
         )
@@ -206,6 +224,50 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
                     disabled: *is_running.read(),
                 }
                 "Use AI summary"
+            }
+        }
+
+        div { class: "focus-page-row",
+            span { class: "focus-page-divider", "or" }
+            button {
+                r#type: "button",
+                disabled: *is_running.read(),
+                onclick: move |_| {
+                    error.set(String::new());
+                    if *use_ai_summary.read() {
+                        confirming_ai_send.set(true);
+                    } else {
+                        spawn(run_focus_page());
+                    }
+                },
+                if *is_running.read() {
+                    "Running…"
+                } else {
+                    "Add Page Learning"
+                }
+            }
+            span { class: "focus-page-hint", "Reads current page." }
+        }
+
+        if *confirming_ai_send.read() {
+            div { class: "confirm-row",
+                span {
+                    "AI summary is on — this page's text will be sent to a third-party AI service (Hugging Face) to generate a summary. Continue?"
+                }
+                button {
+                    class: "btn-primary",
+                    r#type: "button",
+                    onclick: move |_| {
+                        confirming_ai_send.set(false);
+                        spawn(run_focus_page());
+                    },
+                    "Yes, send it"
+                }
+                button {
+                    r#type: "button",
+                    onclick: move |_| confirming_ai_send.set(false),
+                    "Cancel"
+                }
             }
         }
 
