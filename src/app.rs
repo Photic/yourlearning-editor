@@ -355,7 +355,7 @@ fn HistoryTab() -> Element {
 
     rsx! {
         div { class: "history-header",
-            p { class: "subtitle", "Your learnings added via OWLS." }
+            p { class: "subtitle", "Total OWLS: {entries.read().len()}" }
             if !entries.read().is_empty() {
                 button {
                     class: "btn-danger",

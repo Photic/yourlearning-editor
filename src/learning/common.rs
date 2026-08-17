@@ -23,6 +23,43 @@ async fn sleep(ms: i32) {
 
 // ── HF Inference API (bart-large-cnn) ────────────────────────────────────────
 
+/// Number of retries after a network/timeout failure, before giving up.
+const HF_MAX_NETWORK_RETRIES: u32 = 2;
+/// Base delay for the exponential backoff between retries: 1s, 2s, ...
+const HF_RETRY_BASE_DELAY_MS: i32 = 1_000;
+
+/// POSTs to `url`, retrying on network/timeout failures with exponential
+/// backoff up to `HF_MAX_NETWORK_RETRIES` times. This only covers transport
+/// failures (e.g. the request never got a response) — HF's own "model
+/// loading" error payload comes back as `Ok` and is handled by the caller.
+async fn post_json_with_retry(
+    url: &str,
+    headers: &[(&str, &str)],
+    body: &serde_json::Value,
+    timeout_ms: u32,
+) -> Result<String, String> {
+    let mut attempt = 0;
+    loop {
+        match http::post_json(url, headers, body, timeout_ms).await {
+            Ok(raw) => return Ok(raw),
+            Err(e) if attempt < HF_MAX_NETWORK_RETRIES => {
+                let delay_ms = HF_RETRY_BASE_DELAY_MS * 2i32.pow(attempt);
+                tracing::debug!(
+                    "[HF] Request failed ({e}) — retrying in {delay_ms}ms (attempt {}/{})",
+                    attempt + 1,
+                    HF_MAX_NETWORK_RETRIES
+                );
+                sleep(delay_ms).await;
+                attempt += 1;
+            }
+            Err(e) => {
+                tracing::debug!("[HF] Request failed after {} attempts: {e}", attempt + 1);
+                return Err("Connection to HuggingFace failed. Please try again.".to_string());
+            }
+        }
+    }
+}
+
 /// Returns the HuggingFace API token stored in extension settings.
 pub(crate) async fn hf_api_token() -> Option<String> {
     storage::get_setting("HF_API_TOKEN")
@@ -59,17 +96,13 @@ pub(crate) async fn summarize_with_bart(text: &str) -> Result<Option<String>, St
     let auth_header = format!("Bearer {token}");
 
     // First attempt — fast path (model already warm).
-    let raw = http::post_json(
+    let raw = post_json_with_retry(
         "https://router.huggingface.co/hf-inference/models/facebook/bart-large-cnn",
         &[("Authorization", auth_header.as_str())],
         &serde_json::json!({ "inputs": input }),
         15_000,
     )
-    .await
-    .map_err(|e| {
-        tracing::debug!("[HF] Request failed: {e}");
-        "Connection to HuggingFace failed. Please try again.".to_string()
-    })?;
+    .await?;
 
     tracing::debug!("[HF] Response: {}", &raw[..raw.len().min(200)]);
 
@@ -83,7 +116,7 @@ pub(crate) async fn summarize_with_bart(text: &str) -> Result<Option<String>, St
         tracing::debug!("[HF] Model loading — waiting {wait_secs:.0}s then retrying…");
         sleep((wait_secs.min(60.0) * 1000.0) as i32).await;
 
-        let raw2 = http::post_json(
+        let raw2 = post_json_with_retry(
             "https://router.huggingface.co/hf-inference/models/facebook/bart-large-cnn",
             &[
                 ("Authorization", auth_header.as_str()),
@@ -92,11 +125,7 @@ pub(crate) async fn summarize_with_bart(text: &str) -> Result<Option<String>, St
             &serde_json::json!({ "inputs": input }),
             60_000,
         )
-        .await
-        .map_err(|e| {
-            tracing::debug!("[HF] Retry request failed: {e}");
-            "Connection to HuggingFace failed. Please try again.".to_string()
-        })?;
+        .await?;
 
         tracing::debug!("[HF] Retry response: {}", &raw2[..raw2.len().min(200)]);
 
