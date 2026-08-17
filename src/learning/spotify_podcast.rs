@@ -1,4 +1,4 @@
-use super::common::{compute_lix, finish_add_learning, hf_api_token, lix_label, split_duration, summarize_with_bart, transcript_stats};
+use super::common::{build_description_analytics, finish_add_learning, hf_api_token, split_duration, summarize_with_bart};
 use crate::http;
 use chrono::{Local, NaiveDate};
 use dioxus_logger::tracing;
@@ -244,7 +244,7 @@ fn truncate_description(s: &str) -> String {
 ///
 /// Fetches metadata from the embed page and episode page (both unauthenticated),
 /// then follows the same pattern as the Apple and RSS podcast handlers.
-pub(crate) async fn run_spotify_podcast(url: &str, date_override: &str, use_ai_summary: bool) -> Result<String, String> {
+pub(crate) async fn run_spotify_podcast(url: &str, date_override: &str, use_ai_summary: bool) -> Result<(), String> {
     tracing::debug!("[Spotify] Fetching metadata for {url}");
 
     let episode_id = parse_episode_id(url)
@@ -295,21 +295,7 @@ pub(crate) async fn run_spotify_podcast(url: &str, date_override: &str, use_ai_s
         meta.description.clone()
     };
 
-    let transcript_info = if meta.description.trim().is_empty() {
-        None
-    } else {
-        let (words, read_mins) = transcript_stats(&meta.description);
-        let lix = compute_lix(&meta.description);
-        let mut info = match lix {
-            Some(score) => format!(
-                "  Description: {} words  |  ~{} min read\n  LIX score:   {:.1} — {}",
-                words, read_mins, score, lix_label(score)
-            ),
-            None => format!("  Description: {} words  |  ~{} min read", words, read_mins),
-        };
-        if let Some(w) = hf_warning { info.push_str(&format!("\n  ⚠ AI summary: {w}")); }
-        Some(info)
-    };
+    let analytics = build_description_analytics(&meta.description, hf_warning);
 
-    finish_add_learning(url, &title, hours, minutes, &date, &description, transcript_info).await
+    finish_add_learning(url, &title, hours, minutes, &date, &description, analytics).await
 }

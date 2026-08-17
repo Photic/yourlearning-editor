@@ -1,5 +1,5 @@
 use super::common::{compute_lix, finish_add_learning, hf_api_token, lix_label, summarize_with_bart, transcript_stats};
-use crate::http;
+use crate::{http, storage};
 use chrono::{Local, NaiveDate};
 use dioxus_logger::tracing;
 
@@ -203,7 +203,7 @@ fn extract_body_text(html: &str) -> String {
 
 /// Handles any non-YouTube URL: fetch the page, extract title + body text,
 /// optionally summarise with BART, compute LIX, then hand off to YourLearning.
-pub(crate) async fn run_article(url: &str, date_override: &str, use_ai_summary: bool) -> Result<String, String> {
+pub(crate) async fn run_article(url: &str, date_override: &str, use_ai_summary: bool) -> Result<(), String> {
     tracing::debug!("[Article] Fetching {url}");
     let html = fetch_html(url).await?;
 
@@ -264,18 +264,15 @@ pub(crate) async fn run_article(url: &str, date_override: &str, use_ai_summary: 
         String::new()
     };
 
-    // ── Analytics line ───────────────────────────────────────────────────────
+    // ── Analytics ────────────────────────────────────────────────────────────
     // Use the same adjusted reading time that was sent to YourLearning.
     let display_mins = total_read_mins;
-    let mut transcript_info_str = match lix {
-        Some(score) => format!(
-            "  Article:     {} words  |  ~{} min read (@ {}wpm)\n  LIX score:   {:.1} — {}",
-            words, display_mins, wpm, score, lix_label(score)
-        ),
-        None => format!("  Article:     {} words  |  ~{} min read", words, display_mins),
-    };
-    if let Some(w) = hf_warning { transcript_info_str.push_str(&format!("\n  ⚠ AI summary: {w}")); }
-    let transcript_info = Some(transcript_info_str);
+    let analytics = Some(storage::AnalyticsInfo {
+        primary_label: "Article".to_string(),
+        primary_value: format!("{words} words  |  ~{display_mins} min read (@ {wpm}wpm)"),
+        lix: lix.map(|score| storage::LixScore { score, label: lix_label(score).to_string() }),
+        warning: hf_warning,
+    });
 
     // ── Date ─────────────────────────────────────────────────────────────────
     let today = if !date_override.trim().is_empty() {
@@ -286,5 +283,5 @@ pub(crate) async fn run_article(url: &str, date_override: &str, use_ai_summary: 
         Local::now().format("%Y/%m/%d").to_string()
     };
 
-    finish_add_learning(url, &title, hours, minutes, &today, &description, transcript_info).await
+    finish_add_learning(url, &title, hours, minutes, &today, &description, analytics).await
 }

@@ -20,7 +20,12 @@ pub fn App() -> Element {
 
     rsx! {
         link { rel: "stylesheet", href: CSS }
-        main { class: "container",
+        main {
+            class: if matches!(*active_tab.read(), Tab::History | Tab::Help) {
+                "container container--scrollable"
+            } else {
+                "container"
+            },
             h1 { "Steen's OWLS" }
             h5 { "Organised Workflow for Loading & Saving" }
 
@@ -85,8 +90,15 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
     });
     let mut use_ai_summary = use_signal(|| false);
     let mut has_hf_token = use_signal(|| false);
-    let mut output = use_signal(|| String::new());
+    let mut error = use_signal(|| String::new());
+    let mut last_entry: Signal<Option<HistoryEntry>> = use_signal(|| None);
     let mut is_running = use_signal(|| false);
+
+    let refresh_last_entry = move || async move {
+        if let Ok(mut entries) = storage::get_history(1).await {
+            last_entry.set(entries.pop());
+        }
+    };
 
     use_resource(move || async move {
         let token = storage::get_setting("HF_API_TOKEN")
@@ -99,6 +111,8 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
 
         let use_ai = storage::get_setting("USE_AI_SUMMARY").await.ok().flatten();
         use_ai_summary.set(use_ai.map(|v| v == "true").unwrap_or(has_token));
+
+        refresh_last_entry().await;
     });
 
     let submit = move |event: FormEvent| async move {
@@ -110,7 +124,7 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
         }
 
         is_running.set(true);
-        output.set(String::new());
+        error.set(String::new());
 
         let result = crate::browser::run_add_learning_in_background(
             &url_val,
@@ -118,11 +132,11 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
             *use_ai_summary.read(),
         )
         .await;
-        let msg = match result {
-            Ok(v) => v,
-            Err(e) => e,
-        };
-        output.set(msg);
+
+        match result {
+            Ok(_) => refresh_last_entry().await,
+            Err(e) => error.set(e),
+        }
 
         is_running.set(false);
     };
@@ -142,7 +156,7 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
                     oninput: move |event| {
                         url.set(event.value());
                         date_override.set(String::new());
-                        output.set(String::new());
+                        error.set(String::new());
                     },
                     disabled: *is_running.read(),
                 }
@@ -195,8 +209,72 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
             }
         }
 
-        if !output.read().is_empty() {
-            pre { class: "output", "{output}" }
+        if !error.read().is_empty() {
+            pre { class: "output", "{error}" }
+        }
+
+        if let Some(entry) = last_entry.read().as_ref() {
+            LearningSummary { entry: entry.clone() }
+        }
+    }
+}
+
+/// Renders the same title/URL/duration/date + analytics block the popup used
+/// to show right after a submit, but sourced from the latest history entry so
+/// it's always visible — including after reopening the popup, since the work
+/// itself now runs in the background and may finish after the popup closes.
+///
+/// Title/URL are laid out as label+value rows (rather than one preformatted
+/// string) so a wrapped value stays indented under the value column instead
+/// of falling back to the block's left edge.
+#[component]
+fn LearningSummary(entry: HistoryEntry) -> Element {
+    let duration = format!("{}h {}m", entry.hours, entry.minutes);
+    let lix_text = entry
+        .info
+        .as_ref()
+        .and_then(|info| info.lix.as_ref())
+        .map(|lix| format!("{:.1} — {}", lix.score, lix.label));
+
+    rsx! {
+        div { class: "summary",
+            div { class: "summary-heading", "YourLearning — Latest Entry" }
+            div { class: "summary-sep" }
+            div { class: "summary-row",
+                span { class: "summary-label", "Title" }
+                span { class: "summary-value", "{entry.title}" }
+            }
+            div { class: "summary-row",
+                span { class: "summary-label", "URL" }
+                span { class: "summary-value", "{entry.url}" }
+            }
+            div { class: "summary-row",
+                span { class: "summary-label", "Duration" }
+                span { class: "summary-value", "{duration}" }
+            }
+            div { class: "summary-row",
+                span { class: "summary-label", "Date" }
+                span { class: "summary-value", "{entry.date}" }
+            }
+            if let Some(info) = &entry.info {
+                div { class: "summary-sep" }
+                div { class: "summary-row",
+                    span { class: "summary-label", "{info.primary_label}" }
+                    span { class: "summary-value", "{info.primary_value}" }
+                }
+                if let Some(lix_text) = &lix_text {
+                    div { class: "summary-row",
+                        span { class: "summary-label", "LIX score" }
+                        span { class: "summary-value", "{lix_text}" }
+                    }
+                }
+                if let Some(warning) = &info.warning {
+                    div { class: "summary-row",
+                        span { class: "summary-label", "⚠ Warning" }
+                        span { class: "summary-value", "{warning}" }
+                    }
+                }
+            }
         }
     }
 }

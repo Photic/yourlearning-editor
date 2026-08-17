@@ -1,5 +1,5 @@
 use super::common::{compute_lix, finish_add_learning, lix_label, split_duration, summarize_with_bart, transcript_stats};
-use crate::http;
+use crate::{http, storage};
 use chrono::{Local, NaiveDate};
 use dioxus_logger::tracing;
 
@@ -304,7 +304,7 @@ pub(crate) async fn run_youtube_learning(
     url: &str,
     date_override: &str,
     use_ai_summary: bool,
-) -> Result<String, String> {
+) -> Result<(), String> {
     // Strip extra query params after the video ID (e.g. &t=235s).
     let url = url.splitn(2, '&').next().unwrap_or(url);
 
@@ -314,7 +314,7 @@ pub(crate) async fn run_youtube_learning(
     let (hours, minutes) = split_duration(meta.duration_secs);
 
     // ── Fetch captions and summarise ─────────────────────────────────────────
-    let (description, transcript_info) = if use_ai_summary {
+    let (description, analytics) = if use_ai_summary {
         let transcript = fetch_captions(url).await;
         match transcript {
             Some(text) => {
@@ -324,21 +324,18 @@ pub(crate) async fn run_youtube_learning(
 
                 let lix = compute_lix(&text);
                 let (words, read_mins) = transcript_stats(&text);
-                let mut info = match lix {
-                    Some(score) => format!(
-                        "  Transcript:  {} words  |  ~{} min read\n  LIX score:   {:.1} — {}",
-                        words, read_mins, score, lix_label(score)
-                    ),
-                    None => format!("  Transcript:  {} words  |  ~{} min read", words, read_mins),
+
+                let (description, warning) = match summary_result {
+                    Ok(Some(s)) => (s, None),
+                    Ok(None) => (String::new(), None),
+                    Err(e) => (String::new(), Some(e)),
                 };
 
-                let description = match summary_result {
-                    Ok(Some(s)) => s,
-                    Ok(None) => String::new(),
-                    Err(e) => {
-                        info.push_str(&format!("\n  ⚠ AI summary: {e}"));
-                        String::new()
-                    }
+                let info = storage::AnalyticsInfo {
+                    primary_label: "Transcript".to_string(),
+                    primary_value: format!("{words} words  |  ~{read_mins} min read"),
+                    lix: lix.map(|score| storage::LixScore { score, label: lix_label(score).to_string() }),
+                    warning,
                 };
 
                 (description, Some(info))
@@ -362,5 +359,5 @@ pub(crate) async fn run_youtube_learning(
             .unwrap_or_else(|| Local::now().format("%Y/%m/%d").to_string())
     };
 
-    finish_add_learning(url, &title, hours, minutes, &today, &description, transcript_info).await
+    finish_add_learning(url, &title, hours, minutes, &today, &description, analytics).await
 }

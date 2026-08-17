@@ -12,7 +12,7 @@ use dioxus_logger::tracing;
 /// appropriate handler.  This is the single entry point the UI calls for
 /// adding a learning — all URL routing lives here so individual handler
 /// modules stay focused on their own media type.
-pub async fn run_add_learning(url: &str, date_override: &str, use_ai_summary: bool) -> Result<String, String> {
+pub async fn run_add_learning(url: &str, date_override: &str, use_ai_summary: bool) -> Result<(), String> {
     let url = url.trim().to_string();
 
     if !url.starts_with("http://") && !url.starts_with("https://") {

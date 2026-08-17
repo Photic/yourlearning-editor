@@ -16,8 +16,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   (async () => {
     await ready;
     try {
-      const result = await run_add_learning(message.url, message.dateOverride, message.useAiSummary);
-      sendResponse({ ok: true, message: result });
+      await run_add_learning(message.url, message.dateOverride, message.useAiSummary);
+      sendResponse({ ok: true });
     } catch (error) {
       sendResponse({ ok: false, message: String(error) });
     }

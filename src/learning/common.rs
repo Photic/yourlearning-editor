@@ -85,7 +85,10 @@ pub(crate) async fn summarize_with_bart(text: &str) -> Result<Option<String>, St
 
         let raw2 = http::post_json(
             "https://router.huggingface.co/hf-inference/models/facebook/bart-large-cnn",
-            &[("Authorization", auth_header.as_str()), ("X-Wait-For-Model", "true")],
+            &[
+                ("Authorization", auth_header.as_str()),
+                ("X-Wait-For-Model", "true"),
+            ],
             &serde_json::json!({ "inputs": input }),
             60_000,
         )
@@ -141,8 +144,8 @@ pub(crate) fn compute_lix(text: &str) -> Option<f64> {
         .count()
         .max(1); // avoid division by zero for texts without punctuation
 
-    let lix =
-        (word_count as f64 / sentence_count as f64) + (long_word_count as f64 * 100.0 / word_count as f64);
+    let lix = (word_count as f64 / sentence_count as f64)
+        + (long_word_count as f64 * 100.0 / word_count as f64);
     Some(lix)
 }
 
@@ -168,11 +171,29 @@ pub(crate) fn split_duration(secs: u64) -> (u64, u64) {
     (secs / 3600, (secs % 3600) / 60)
 }
 
+/// Builds the analytics block for a plain "Description" body of text — the
+/// shape shared by all the podcast handlers (Apple, Spotify, RSS, Vimeo).
+/// Returns `None` for empty text; YouTube and articles build their own
+/// (different primary label, and articles always report even without LIX).
+pub(crate) fn build_description_analytics(text: &str, warning: Option<String>) -> Option<storage::AnalyticsInfo> {
+    if text.trim().is_empty() {
+        return None;
+    }
+    let (words, read_mins) = transcript_stats(text);
+    let lix = compute_lix(text);
+    Some(storage::AnalyticsInfo {
+        primary_label: "Description".to_string(),
+        primary_value: format!("{words} words  |  ~{read_mins} min read"),
+        lix: lix.map(|score| storage::LixScore { score, label: lix_label(score).to_string() }),
+        warning,
+    })
+}
+
 // ── Helpers shared with other controllers ─────────────────────────────────────
 
-/// Formats the output block and analytics line, hands the prefill payload to
-/// the content script (via a well-known `chrome.storage.local` key it reads
-/// on load), opens the YourLearning tab, and records the entry in history.
+/// Hands the prefill payload to the content script (via a well-known
+/// `chrome.storage.local` key it reads on load), opens the YourLearning tab,
+/// and records the entry — with its analytics — in history.
 pub(crate) async fn finish_add_learning(
     url: &str,
     title: &str,
@@ -180,18 +201,8 @@ pub(crate) async fn finish_add_learning(
     minutes: u64,
     today: &str,
     description: &str,
-    transcript_info: Option<String>,
-) -> Result<String, String> {
-    let analytics_line = match &transcript_info {
-        Some(info) => format!("{info}\n"),
-        None => String::new(),
-    };
-
-    let summary = format!(
-        "\n{sep}\n  YourLearning — Add Personal Learning\n{sep}\n  Title:    {title}\n  URL:      {url}\n  Duration: {hours}h {minutes}m\n  Date:     {today}\n{sep}\n{analytics_line}",
-        sep = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    );
-
+    analytics: Option<storage::AnalyticsInfo>,
+) -> Result<(), String> {
     let payload = serde_json::json!({
         "title": title,
         "url": url,
@@ -209,9 +220,7 @@ pub(crate) async fn finish_add_learning(
         .map_err(|e| format!("Failed to open browser: {e}"))?;
 
     // Record in history (best-effort — don't fail the whole flow if this errors).
-    let _ = storage::add_history(url, title, hours, minutes, today).await;
+    let _ = storage::add_history(url, title, hours, minutes, today, analytics).await;
 
-    Ok(format!(
-        "{summary}✓ Browser opened — the extension will fill the form automatically."
-    ))
+    Ok(())
 }

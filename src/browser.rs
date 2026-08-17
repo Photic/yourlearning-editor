@@ -28,7 +28,7 @@ pub async fn run_add_learning_in_background(
     url: &str,
     date_override: &str,
     use_ai_summary: bool,
-) -> Result<String, String> {
+) -> Result<(), String> {
     let message = Object::new();
     Reflect::set(&message, &"type".into(), &"add_learning".into()).map_err(|e| js_err(&e))?;
     Reflect::set(&message, &"url".into(), &url.into()).map_err(|e| js_err(&e))?;
@@ -43,12 +43,16 @@ pub async fn run_add_learning_in_background(
         .ok()
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let text = Reflect::get(&response, &"message".into())
-        .ok()
-        .and_then(|v| v.as_string())
-        .unwrap_or_else(|| "No response from background worker.".to_string());
 
-    if ok { Ok(text) } else { Err(text) }
+    if ok {
+        Ok(())
+    } else {
+        let text = Reflect::get(&response, &"message".into())
+            .ok()
+            .and_then(|v| v.as_string())
+            .unwrap_or_else(|| "No response from background worker.".to_string());
+        Err(text)
+    }
 }
 
 fn js_err(value: &JsValue) -> String {

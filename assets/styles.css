@@ -17,18 +17,26 @@
 html,
 body {
   margin: 0;
-  max-height: 600px;
-  overflow-y: auto;
 }
 
 .container {
   margin: 0 auto;
   max-width: 720px;
+  min-height: 480px;
   padding: 1.5rem 1.5rem 2rem;
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
+  box-sizing: border-box;
+}
+
+/* Add Learning's content is short and fixed, so the popup auto-sizes to fit
+   it exactly with no scrollbar. History and Help can grow much longer, so
+   they cap the popup's height and scroll internally instead. */
+.container--scrollable {
+  max-height: 600px;
+  overflow-y: auto;
 }
 
 h1 {
@@ -211,7 +219,8 @@ button {
   font-size: 0.9em;
 }
 
-.output {
+.output,
+.summary {
   margin-top: 1.5rem;
   width: 100%;
   text-align: left;
@@ -221,9 +230,47 @@ button {
   padding: 1rem 1.2rem;
   font-size: 0.85em;
   line-height: 1.6;
+  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.1);
+  box-sizing: border-box;
+}
+
+.output {
   white-space: pre-wrap;
   word-break: break-word;
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.1);
+}
+
+.summary {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.summary-heading {
+  text-align: center;
+}
+
+.summary-sep {
+  border-top: 1px solid currentColor;
+  opacity: 0.35;
+  margin: 0.5em 0;
+}
+
+.summary-row {
+  display: flex;
+  gap: 0.5em;
+}
+
+.summary-label {
+  /* Fixed in `ch` (monospace character width) rather than `em` so labels
+     like "Description" or "Transcript" can't grow their row's column past
+     this width — a flex item's default min-width:auto otherwise overrides
+     a shorter flex-basis whenever its own content doesn't fit. */
+  flex: 0 0 12ch;
+  opacity: 0.7;
+}
+
+.summary-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-word;
 }
 
 .help {
@@ -360,7 +407,8 @@ button {
     background: #333;
   }
 
-  .output {
+  .output,
+  .summary {
     background: #1a1a1a;
     border-color: #444;
   }

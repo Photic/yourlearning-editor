@@ -1,4 +1,4 @@
-use super::common::{compute_lix, finish_add_learning, hf_api_token, lix_label, split_duration, summarize_with_bart, transcript_stats};
+use super::common::{build_description_analytics, finish_add_learning, hf_api_token, split_duration, summarize_with_bart};
 use crate::http;
 use chrono::{Local, NaiveDate};
 use dioxus_logger::tracing;
@@ -167,7 +167,7 @@ fn parse_rfc2822_date(s: &str) -> String {
 /// - Looks up show + optional episode via the iTunes API.
 /// - If an episode is specified, tries to find a description from the RSS feed.
 /// - Optionally summarises the description with BART.
-pub(crate) async fn run_apple_podcast(url: &str, date_override: &str, use_ai_summary: bool) -> Result<String, String> {
+pub(crate) async fn run_apple_podcast(url: &str, date_override: &str, use_ai_summary: bool) -> Result<(), String> {
     tracing::debug!("[Apple] Fetching metadata for {url}");
 
     let (podcast_id, episode_id) = parse_apple_url(url)
@@ -229,12 +229,9 @@ pub(crate) async fn run_apple_podcast(url: &str, date_override: &str, use_ai_sum
                 ep_desc.clone()
             };
 
-            let transcript_info = build_transcript_info(&ep_desc).map(|mut info| {
-                if let Some(w) = hf_warning { info.push_str(&format!("\n  ⚠ AI summary: {w}")); }
-                info
-            });
+            let analytics = build_description_analytics(&ep_desc, hf_warning);
 
-            return finish_add_learning(url, &title, hours, minutes, &date, &description, transcript_info).await;
+            return finish_add_learning(url, &title, hours, minutes, &date, &description, analytics).await;
         }
 
         tracing::debug!("[Apple] Episode not found in feed — falling back to show-level metadata");
@@ -274,27 +271,7 @@ pub(crate) async fn run_apple_podcast(url: &str, date_override: &str, use_ai_sum
         show_desc.clone()
     };
 
-    let transcript_info = build_transcript_info(&show_desc).map(|mut info| {
-        if let Some(w) = hf_warning { info.push_str(&format!("\n  ⚠ AI summary: {w}")); }
-        info
-    });
+    let analytics = build_description_analytics(&show_desc, hf_warning);
 
-    finish_add_learning(url, &title, hours, minutes, &date, &description, transcript_info).await
-}
-
-/// Builds the analytics info line from a description/text blob.
-/// Returns None if the text is empty.
-fn build_transcript_info(text: &str) -> Option<String> {
-    if text.trim().is_empty() {
-        return None;
-    }
-    let (words, read_mins) = transcript_stats(text);
-    let lix = compute_lix(text);
-    Some(match lix {
-        Some(score) => format!(
-            "  Description: {} words  |  ~{} min read\n  LIX score:   {:.1} — {}",
-            words, read_mins, score, lix_label(score)
-        ),
-        None => format!("  Description: {} words  |  ~{} min read", words, read_mins),
-    })
+    finish_add_learning(url, &title, hours, minutes, &date, &description, analytics).await
 }

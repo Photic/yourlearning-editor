@@ -1,4 +1,4 @@
-use super::common::{compute_lix, finish_add_learning, hf_api_token, lix_label, split_duration, summarize_with_bart, transcript_stats};
+use super::common::{build_description_analytics, finish_add_learning, hf_api_token, split_duration, summarize_with_bart};
 use crate::http;
 use chrono::{Local, NaiveDate};
 use dioxus_logger::tracing;
@@ -133,7 +133,7 @@ fn parse_latest_episode(xml: &str) -> Option<EpisodeMeta> {
 /// optionally summarises the episode description with BART.  If anything
 /// cannot be extracted the field is left empty so the user can fill it in
 /// manually on the YourLearning form.
-pub(crate) async fn run_rss_podcast(url: &str, date_override: &str, use_ai_summary: bool) -> Result<String, String> {
+pub(crate) async fn run_rss_podcast(url: &str, date_override: &str, use_ai_summary: bool) -> Result<(), String> {
     tracing::debug!("[RSS] Fetching feed {url}");
     let xml = fetch_feed(url).await?;
 
@@ -190,22 +190,7 @@ pub(crate) async fn run_rss_podcast(url: &str, date_override: &str, use_ai_summa
         text_for_summary.clone()
     };
 
-    // ── Analytics line ────────────────────────────────────────────────────────
-    let transcript_info = if text_for_summary.trim().is_empty() {
-        None
-    } else {
-        let (words, read_mins) = transcript_stats(&text_for_summary);
-        let lix = compute_lix(&text_for_summary);
-        let mut info = match lix {
-            Some(score) => format!(
-                "  Description: {} words  |  ~{} min read\n  LIX score:   {:.1} — {}",
-                words, read_mins, score, lix_label(score)
-            ),
-            None => format!("  Description: {} words  |  ~{} min read", words, read_mins),
-        };
-        if let Some(w) = hf_warning { info.push_str(&format!("\n  ⚠ AI summary: {w}")); }
-        Some(info)
-    };
+    let analytics = build_description_analytics(&text_for_summary, hf_warning);
 
-    finish_add_learning(url, &title, hours, minutes, &date, &description, transcript_info).await
+    finish_add_learning(url, &title, hours, minutes, &date, &description, analytics).await
 }

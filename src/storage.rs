@@ -16,6 +16,27 @@ const HISTORY_LIMIT: usize = 50;
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LixScore {
+    pub score: f64,
+    pub label: String,
+}
+
+/// Analytics for a learning entry (word count, LIX score, AI-summary
+/// warnings) shown for this entry when it's the most recent one — structured
+/// so the popup can render it as label/value rows instead of one opaque
+/// preformatted string.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyticsInfo {
+    /// "Transcript" (YouTube), "Article", or "Description" (podcasts).
+    pub primary_label: String,
+    pub primary_value: String,
+    pub lix: Option<LixScore>,
+    pub warning: Option<String>,
+}
+
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct HistoryEntry {
     pub id: i64,
     pub url: String,
@@ -24,6 +45,10 @@ pub struct HistoryEntry {
     pub minutes: i64,
     pub date: String,
     pub added_at: String,
+    /// `#[serde(default)]` so history entries written before this field
+    /// existed still deserialize.
+    #[serde(default)]
+    pub info: Option<AnalyticsInfo>,
 }
 
 pub async fn get_setting(key: &str) -> Result<Option<String>, String> {
@@ -45,7 +70,14 @@ pub async fn get_history(limit: usize) -> Result<Vec<HistoryEntry>, String> {
     Ok(entries)
 }
 
-pub async fn add_history(url: &str, title: &str, hours: u64, minutes: u64, date: &str) -> Result<(), String> {
+pub async fn add_history(
+    url: &str,
+    title: &str,
+    hours: u64,
+    minutes: u64,
+    date: &str,
+    info: Option<AnalyticsInfo>,
+) -> Result<(), String> {
     let mut entries = get_all_history().await?;
     entries.insert(
         0,
@@ -57,6 +89,7 @@ pub async fn add_history(url: &str, title: &str, hours: u64, minutes: u64, date:
             minutes: minutes as i64,
             date: date.to_string(),
             added_at: js_sys::Date::new_0().to_iso_string().as_string().unwrap_or_default(),
+            info,
         },
     );
     entries.truncate(HISTORY_LIMIT);
@@ -73,7 +106,14 @@ async fn get_all_history() -> Result<Vec<HistoryEntry>, String> {
     if value.is_undefined() {
         return Ok(Vec::new());
     }
-    serde_wasm_bindgen::from_value(value).map_err(|e| e.to_string())
+    // Deserialize leniently: parse each entry independently and drop any
+    // that don't fit the current shape, rather than failing the whole list
+    // over one entry written under a schema this version no longer matches.
+    let raw: Vec<serde_json::Value> = serde_wasm_bindgen::from_value(value).map_err(|e| e.to_string())?;
+    Ok(raw
+        .into_iter()
+        .filter_map(|entry| serde_json::from_value::<HistoryEntry>(entry).ok())
+        .collect())
 }
 
 async fn get_keys(keys: &[&str]) -> Result<JsValue, String> {
