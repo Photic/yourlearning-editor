@@ -8,7 +8,7 @@ This file provides context for any AI agent working on this project. **Keep it u
 
 ## What is OWLS?
 
-**OWLS** (Organised Workflow for Loading & Saving) is a desktop app for logging personal learning entries. The user pastes a URL and the app fetches metadata, optionally generates an AI summary, and saves the entry to a local SQLite database.
+**OWLS** (Organising Web Links & Summaries) is a desktop app for logging personal learning entries. The user pastes a URL and the app fetches metadata, optionally generates an AI summary, and saves the entry to a local SQLite database.
 
 **Supported content sources:**
 - YouTube (`youtube.com/watch`, `youtu.be/`)

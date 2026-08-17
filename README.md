@@ -1,6 +1,8 @@
-# Tauri + Dioxus
+# OWLS
 
-This template should help get you started developing with Tauri and Dioxus.
+**OWLS** (Organising Web Links & Summaries) is a desktop app for logging personal learning entries. Paste a URL and the app fetches metadata, optionally generates an AI summary, and saves the entry to a local SQLite database.
+
+Built with Tauri + Dioxus.
 
 ## Recommended IDE Setup
 

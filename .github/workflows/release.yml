@@ -36,15 +36,15 @@ jobs:
       - name: Package extension
         run: |
           mkdir -p out
-          (cd dist/public && zip -r "$GITHUB_WORKSPACE/out/yourlearning-editor-extension-${{ github.ref_name }}.zip" .)
+          (cd dist/public && zip -r "$GITHUB_WORKSPACE/out/owls-extension-${{ github.ref_name }}.zip" .)
 
       - name: Create draft release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: "YourLearning Editor ${{ github.ref_name }}"
+          name: "OWLS ${{ github.ref_name }}"
           body: |
-            Download `yourlearning-editor-extension-${{ github.ref_name }}.zip`, unzip it, then load it in your browser:
+            Download `owls-extension-${{ github.ref_name }}.zip`, unzip it, then load it in your browser:
 
             1. Go to `chrome://extensions`
             2. Enable Developer mode

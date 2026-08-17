@@ -27,7 +27,7 @@ pub fn App() -> Element {
                 "container"
             },
             h1 { "Steen's OWLS" }
-            h5 { "Organised Workflow for Loading & Saving" }
+            h5 { "Organising Web Links & Summaries" }
 
             br {}
 
