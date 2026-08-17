@@ -5,22 +5,12 @@ on:
     tags:
       - "v*"
 
+permissions:
+  contents: write
+
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: ubuntu-22.04
-            args: ""
-          - platform: windows-latest
-            args: ""
-          - platform: macos-latest
-            args: "--target aarch64-apple-darwin"
-          - platform: macos-latest
-            args: "--target x86_64-apple-darwin"
-
-    runs-on: ${{ matrix.platform }}
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
@@ -28,42 +18,37 @@ jobs:
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Add WASM target
         run: rustup target add wasm32-unknown-unknown
-
-      - name: Install Dioxus CLI
-        run: cargo install dioxus-cli --locked
-
-      - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
 
-      - name: Build the app
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # No Apple Developer certificate — users run `xattr -cr /Applications/owls.app`
-          # Setting APPLE_SIGNING_IDENTITY to "-" uses ad-hoc signing and skips the
-          # `security import` step that fails on macOS 14 runners when no cert is present.
-          APPLE_SIGNING_IDENTITY: ${{ matrix.platform == 'macos-latest' && '-' || '' }}
+      - name: Install Dioxus CLI
+        run: cargo install dioxus-cli --locked
+
+      - name: Build the extension
+        run: ./build-extension.sh
+
+      - name: Package extension
+        run: |
+          mkdir -p out
+          (cd dist/public && zip -r "$GITHUB_WORKSPACE/out/yourlearning-editor-extension-${{ github.ref_name }}.zip" .)
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "OWLS ${{ github.ref_name }}"
-          releaseBody: "See the assets below to download and install this version.\n\nSince I do not have a paid account for Apple applications. A small command need to be run after the application has been moved to the application folder.\n\n`xattr -cr /Applications/owls.app`\n\nSimilar work arounds might be required for other operation systems."
-          releaseDraft: true
+          tag_name: ${{ github.ref_name }}
+          name: "YourLearning Editor ${{ github.ref_name }}"
+          body: |
+            Download `yourlearning-editor-extension-${{ github.ref_name }}.zip`, unzip it, then load it in your browser:
+
+            1. Go to `chrome://extensions`
+            2. Enable Developer mode
+            3. Click "Load unpacked" and select the unzipped folder
+          draft: true
           prerelease: false
-          args: ${{ matrix.args }}
+          files: out/*.zip

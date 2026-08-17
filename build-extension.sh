@@ -12,7 +12,10 @@ dx bundle --release
 # that attribute — on a chrome-extension:// page the mismatch makes Chrome
 # log a "cross-world extension resource mismatch" warning and re-fetch the
 # script instead of reusing the preload. It's just a perf hint, so drop it.
-sed -i '' -E 's#<link rel="preload" as="script" href="[^"]*" crossorigin>##' dist/public/index.html
+# (Writing to a temp file instead of using `sed -i` keeps this portable
+# between BSD sed on macOS and GNU sed on Linux CI runners.)
+sed -E 's#<link rel="preload" as="script" href="[^"]*" crossorigin>##' dist/public/index.html > dist/public/index.html.tmp
+mv dist/public/index.html.tmp dist/public/index.html
 
 # The background worker isn't a Dioxus "app" (no UI, no asset_dir usage), so
 # it's built as a plain wasm binary via `dx build --bin` rather than

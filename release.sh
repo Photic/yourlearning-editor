@@ -19,14 +19,11 @@ echo "→ Bumping version to $VERSION"
 # Cargo.toml (root)
 sed -i '' "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
 
-# src-tauri/Cargo.toml
-sed -i '' "s/^version = \".*\"/version = \"$VERSION\"/" src-tauri/Cargo.toml
-
-# src-tauri/tauri.conf.json
-sed -i '' "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" src-tauri/tauri.conf.json
+# extension/manifest.json
+sed -i '' "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" extension/manifest.json
 
 echo "→ Committing version bump"
-git add Cargo.toml src-tauri/Cargo.toml src-tauri/tauri.conf.json
+git add Cargo.toml extension/manifest.json
 git commit -m "chore: bump version to $VERSION"
 
 echo "→ Tagging $TAG"
@@ -62,13 +59,11 @@ if [[ "$(gh release view "$TAG" --json isDraft --jq '.isDraft' 2>/dev/null || tr
   exit 1
 fi
 
-RELEASE_NOTES='See the assets below to download and install this version.
+RELEASE_NOTES='Download the extension zip below, unzip it, then load it in your browser:
 
-Since I do not have a paid account for Apple applications. A small command need to be run after the application has been moved to the application folder.
-
-`xattr -cr /Applications/owls.app`
-
-Similar work arounds might be required for other operation systems.'
+1. Go to `chrome://extensions`
+2. Enable Developer mode
+3. Click "Load unpacked" and select the unzipped folder'
 
 echo "→ Publishing release $TAG"
 gh release edit "$TAG" --draft=false --notes "$RELEASE_NOTES"
