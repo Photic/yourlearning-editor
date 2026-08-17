@@ -29,8 +29,10 @@ git commit -m "chore: bump version to $VERSION"
 echo "→ Tagging $TAG"
 git tag -a "$TAG" -m "Release $TAG"
 
-echo "→ Pushing to origin"
-git push origin main --follow-tags
+BRANCH="$(git branch --show-current)"
+
+echo "→ Pushing $BRANCH to origin"
+git push origin "$BRANCH" --follow-tags
 
 REPO_URL="$(git remote get-url origin | sed 's/\.git$//')"
 
