@@ -1,25 +1,9 @@
+use crate::browser::sleep;
 use crate::{browser, http, storage};
 use dioxus_logger::tracing;
-use wasm_bindgen::prelude::*;
 
 pub(crate) const YOURLEARNING_URL: &str = "https://yourlearning.ibm.com/add-learning";
 const PENDING_ADD_LEARNING_KEY: &str = "PENDING_ADD_LEARNING";
-
-#[wasm_bindgen]
-extern "C" {
-    #[wasm_bindgen(js_name = setTimeout)]
-    fn set_timeout(callback: &js_sys::Function, millis: i32) -> i32;
-}
-
-/// Resolves after `ms` milliseconds. Works in both window and service-worker
-/// contexts since `setTimeout` is a bare global in both — unlike `gloo-timers`,
-/// which is built around `window` and isn't meant to run in a service worker.
-async fn sleep(ms: i32) {
-    let promise = js_sys::Promise::new(&mut |resolve, _reject| {
-        set_timeout(&resolve, ms);
-    });
-    let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
-}
 
 // ── HF Inference API (bart-large-cnn) ────────────────────────────────────────
 

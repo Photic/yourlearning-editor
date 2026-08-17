@@ -15,8 +15,119 @@ enum Tab {
     Help,
 }
 
+// ── Toast system ────────────────────────────────────────────────────────────
+//
+// One shared toast, provided via context so any tab can raise it without prop
+// drilling. A toast with an `action` needs the user to choose, so it stays up
+// until they click Confirm or Cancel; a plain info toast (no `action`) has
+// nothing to wait on, so it clears itself after `INFO_TOAST_MS`.
+
+const INFO_TOAST_MS: i32 = 6_000;
+
+#[derive(Clone, PartialEq)]
+struct ToastAction {
+    label: String,
+    on_click: Callback<()>,
+    is_danger: bool,
+}
+
+#[derive(Clone, PartialEq)]
+struct Toast {
+    /// Distinguishes this toast from whatever replaces it, so an info toast's
+    /// delayed auto-dismiss doesn't clear a *later* toast that's since taken
+    /// its place.
+    id: f64,
+    message: String,
+    action: Option<ToastAction>,
+}
+
+/// Raises a toast that waits for the user to confirm or cancel — used for
+/// anything that shouldn't happen without an explicit yes (sending page
+/// content to a third-party AI, deleting history, …).
+fn show_confirm_toast(
+    mut toast: Signal<Option<Toast>>,
+    message: impl Into<String>,
+    action_label: impl Into<String>,
+    is_danger: bool,
+    on_confirm: Callback<()>,
+) {
+    toast.set(Some(Toast {
+        id: js_sys::Date::now(),
+        message: message.into(),
+        action: Some(ToastAction {
+            label: action_label.into(),
+            on_click: on_confirm,
+            is_danger,
+        }),
+    }));
+}
+
+/// Raises a plain informational toast that clears itself after
+/// `INFO_TOAST_MS` — for messages that don't need a decision.
+fn show_info_toast(mut toast: Signal<Option<Toast>>, message: impl Into<String>) {
+    let id = js_sys::Date::now();
+    toast.set(Some(Toast {
+        id,
+        message: message.into(),
+        action: None,
+    }));
+
+    spawn(async move {
+        crate::browser::sleep(INFO_TOAST_MS).await;
+        // Only clear it if it's still the same toast — a newer one may have
+        // already replaced it by the time this fires.
+        if toast.read().as_ref().is_some_and(|t| t.id == id) {
+            toast.set(None);
+        }
+    });
+}
+
+fn ToastHost() -> Element {
+    let mut toast: Signal<Option<Toast>> = use_context();
+
+    rsx! {
+        if let Some(t) = toast.read().clone() {
+            // Keyed on the toast's id so a new toast — even one that's also
+            // action-less — remounts this node instead of patching it, which
+            // is what makes the progress-bar animation below restart cleanly
+            // rather than continuing mid-way through from the previous toast.
+            div { key: "{t.id}", class: "toast",
+                span { class: "toast-message", "{t.message}" }
+                if let Some(action) = t.action.clone() {
+                    div { class: "toast-actions",
+                        button {
+                            class: if action.is_danger { "btn-danger" } else { "btn-primary" },
+                            r#type: "button",
+                            onclick: move |_| {
+                                action.on_click.call(());
+                                toast.set(None);
+                            },
+                            "{action.label}"
+                        }
+                        button {
+                            r#type: "button",
+                            onclick: move |_| toast.set(None),
+                            "Cancel"
+                        }
+                    }
+                } else {
+                    div {
+                        class: "toast-progress",
+                        style: "animation-duration: {INFO_TOAST_MS}ms;",
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub fn App() -> Element {
     let mut active_tab = use_signal(|| Tab::AddLearning);
+    // `Signal::new`, not `use_signal` — this closure runs inside
+    // `use_context_provider`'s own hook, and calling another hook from in
+    // there double-borrows the scope's hook list (`Signal::new` constructs a
+    // signal directly without registering as a hook, so it's safe here).
+    use_context_provider(|| Signal::new(None::<Toast>));
 
     rsx! {
         link { rel: "stylesheet", href: CSS }
@@ -65,6 +176,8 @@ pub fn App() -> Element {
                     HelpTab {}
                 },
             }
+
+            ToastHost {}
         }
     }
 }
@@ -88,7 +201,7 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
     let mut error = use_signal(|| String::new());
     let mut last_entry: Signal<Option<HistoryEntry>> = use_signal(|| None);
     let mut is_running = use_signal(|| false);
-    let mut confirming_ai_send = use_signal(|| false);
+    let toast: Signal<Option<Toast>> = use_context();
 
     let refresh_last_entry = move || async move {
         if let Ok(mut entries) = storage::get_history(1).await {
@@ -153,7 +266,7 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
 
         match result {
             Ok(_) => refresh_last_entry().await,
-            Err(e) => error.set(e),
+            Err(e) => show_info_toast(toast, e),
         }
 
         is_running.set(false);
@@ -235,7 +348,15 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
                 onclick: move |_| {
                     error.set(String::new());
                     if *use_ai_summary.read() {
-                        confirming_ai_send.set(true);
+                        show_confirm_toast(
+                            toast,
+                            "AI summary is on — this page's text will be sent to a third-party AI service (Hugging Face) to generate a summary.",
+                            "Yes, send it",
+                            false,
+                            Callback::new(move |_| {
+                                spawn(run_focus_page());
+                            }),
+                        );
                     } else {
                         spawn(run_focus_page());
                     }
@@ -247,28 +368,6 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
                 }
             }
             span { class: "focus-page-hint", "Reads current page." }
-        }
-
-        if *confirming_ai_send.read() {
-            div { class: "confirm-row",
-                span {
-                    "AI summary is on — this page's text will be sent to a third-party AI service (Hugging Face) to generate a summary. Continue?"
-                }
-                button {
-                    class: "btn-primary",
-                    r#type: "button",
-                    onclick: move |_| {
-                        confirming_ai_send.set(false);
-                        spawn(run_focus_page());
-                    },
-                    "Yes, send it"
-                }
-                button {
-                    r#type: "button",
-                    onclick: move |_| confirming_ai_send.set(false),
-                    "Cancel"
-                }
-            }
         }
 
         if !error.read().is_empty() {
@@ -406,7 +505,7 @@ fn HfTokenTab() -> Element {
 fn HistoryTab() -> Element {
     let mut entries: Signal<Vec<HistoryEntry>> = use_signal(Vec::new);
     let mut error = use_signal(|| String::new());
-    let mut confirming_clear = use_signal(|| false);
+    let toast: Signal<Option<Toast>> = use_context();
 
     use_resource(move || async move {
         match storage::get_all_history().await {
@@ -422,36 +521,24 @@ fn HistoryTab() -> Element {
                 button {
                     class: "btn-danger",
                     r#type: "button",
-                    onclick: move |_| confirming_clear.set(true),
-                    "Clear History"
-                }
-            }
-        }
-
-        if *confirming_clear.read() {
-            div { class: "confirm-row",
-                span { "Clear all history? This can't be undone." }
-                button {
-                    class: "btn-danger",
-                    r#type: "button",
                     onclick: move |_| {
-                        spawn(async move {
-                            error.set(String::new());
-                            match storage::clear_history().await {
-                                Ok(()) => {
-                                    entries.set(Vec::new());
-                                    confirming_clear.set(false);
-                                }
-                                Err(e) => error.set(format!("Could not clear history: {e}")),
-                            }
-                        });
+                        show_confirm_toast(
+                            toast,
+                            "Clear all history? This can't be undone.",
+                            "Yes, clear it",
+                            true,
+                            Callback::new(move |_| {
+                                spawn(async move {
+                                    error.set(String::new());
+                                    match storage::clear_history().await {
+                                        Ok(()) => entries.set(Vec::new()),
+                                        Err(e) => error.set(format!("Could not clear history: {e}")),
+                                    }
+                                });
+                            }),
+                        );
                     },
-                    "Yes, clear it"
-                }
-                button {
-                    r#type: "button",
-                    onclick: move |_| confirming_clear.set(false),
-                    "Cancel"
+                    "Clear History"
                 }
             }
         }

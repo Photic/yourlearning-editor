@@ -72,6 +72,12 @@ The app is a single-page tabbed interface (`max-width: 720px`, centred):
 - **History** — Paginated list of past learning entries from SQLite
 - **Help** — FAQ and usage guide
 
+**Toasts** — a single shared toast (`app.rs`, provided via Dioxus context so
+any tab can raise one) replaces one-off inline confirm banners. A toast with
+an action (e.g. "Yes, send it" / "Cancel") stays up until the user picks one;
+a plain info toast (no action) auto-dismisses after ~2.5s. Used today for the
+AI-consent prompt on "Add Page Learning" and the Clear History confirmation.
+
 ---
 
 ## Style Conventions

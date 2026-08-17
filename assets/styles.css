@@ -363,13 +363,60 @@ button {
   border-color: #bf2d2d;
 }
 
-.confirm-row {
+.toast {
+  position: fixed;
+  left: 1rem;
+  right: 1rem;
+  top: 1rem;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 0.9rem 1rem;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  text-align: left;
+  font-size: 0.85em;
+  z-index: 1000;
   display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  margin-top: 1rem;
-  font-size: 0.9em;
+  flex-direction: column;
+  gap: 0.6rem;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+/* Flush against the toast's own edges (not inset by its padding) so it
+   reads as a native countdown indicator. `animation-duration` is set inline
+   from `INFO_TOAST_MS` so the bar and the actual auto-dismiss timer can
+   never drift apart. */
+.toast-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: #396cd8;
+  transform-origin: left;
+  animation-name: toast-progress-shrink;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+@keyframes toast-progress-shrink {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+.toast-message {
+  line-height: 1.5;
+}
+
+.toast-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .history-list {
@@ -474,6 +521,7 @@ button {
     background: #333;
   }
 
+  .toast,
   .output,
   .summary {
     background: #1a1a1a;
