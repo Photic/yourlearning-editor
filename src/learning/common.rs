@@ -1,8 +1,25 @@
 use crate::{browser, http, storage};
 use dioxus_logger::tracing;
+use wasm_bindgen::prelude::*;
 
 pub(crate) const YOURLEARNING_URL: &str = "https://yourlearning.ibm.com/add-learning";
 const PENDING_ADD_LEARNING_KEY: &str = "PENDING_ADD_LEARNING";
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_name = setTimeout)]
+    fn set_timeout(callback: &js_sys::Function, millis: i32) -> i32;
+}
+
+/// Resolves after `ms` milliseconds. Works in both window and service-worker
+/// contexts since `setTimeout` is a bare global in both — unlike `gloo-timers`,
+/// which is built around `window` and isn't meant to run in a service worker.
+async fn sleep(ms: i32) {
+    let promise = js_sys::Promise::new(&mut |resolve, _reject| {
+        set_timeout(&resolve, ms);
+    });
+    let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
+}
 
 // ── HF Inference API (bart-large-cnn) ────────────────────────────────────────
 
@@ -64,7 +81,7 @@ pub(crate) async fn summarize_with_bart(text: &str) -> Result<Option<String>, St
     if value.get("error").is_some() {
         let wait_secs = value["estimated_time"].as_f64().unwrap_or(20.0);
         tracing::debug!("[HF] Model loading — waiting {wait_secs:.0}s then retrying…");
-        gloo_timers::future::sleep(std::time::Duration::from_secs_f64(wait_secs.min(60.0))).await;
+        sleep((wait_secs.min(60.0) * 1000.0) as i32).await;
 
         let raw2 = http::post_json(
             "https://router.huggingface.co/hf-inference/models/facebook/bart-large-cnn",

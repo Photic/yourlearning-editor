@@ -14,10 +14,17 @@
   -webkit-text-size-adjust: 100%;
 }
 
+html,
+body {
+  margin: 0;
+  max-height: 600px;
+  overflow-y: auto;
+}
+
 .container {
   margin: 0 auto;
   max-width: 720px;
-  padding: 10vh 1.5rem 2rem;
+  padding: 1.5rem 1.5rem 2rem;
   display: flex;
   flex-direction: column;
   align-items: center;
