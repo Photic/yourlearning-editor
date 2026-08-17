@@ -1,53 +1,16 @@
 #![allow(non_snake_case)]
 
+use crate::storage;
 use dioxus::prelude::*;
 use js_sys;
-use serde::{Deserialize, Serialize};
-use wasm_bindgen::prelude::*;
+use storage::HistoryEntry;
 
 static CSS: Asset = asset!("/assets/styles.css");
-
-#[wasm_bindgen]
-extern "C" {
-    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"])]
-    fn invoke(cmd: &str, args: JsValue) -> js_sys::Promise;
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AddLearningArgs {
-    url: String,
-    date_override: String,
-    use_ai_summary: bool,
-}
-
-#[derive(Serialize)]
-struct SetTokenArgs {
-    value: String,
-}
-
-#[derive(Serialize)]
-struct SetUseAiSummaryArgs {
-    value: bool,
-}
-
-#[derive(Clone, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct HistoryEntry {
-    id: i64,
-    url: String,
-    title: String,
-    hours: i64,
-    minutes: i64,
-    date: String,
-    added_at: String,
-}
 
 #[derive(Clone, PartialEq)]
 enum Tab {
     AddLearning,
     HfToken,
-    Extension,
     History,
     Help,
 }
@@ -76,11 +39,6 @@ pub fn App() -> Element {
                     "HF Token"
                 }
                 button {
-                    class: if *active_tab.read() == Tab::Extension { "tab tab--active" } else { "tab" },
-                    onclick: move |_| active_tab.set(Tab::Extension),
-                    "Install Extension"
-                }
-                button {
                     class: if *active_tab.read() == Tab::History { "tab tab--active" } else { "tab" },
                     onclick: move |_| active_tab.set(Tab::History),
                     "History"
@@ -99,9 +57,6 @@ pub fn App() -> Element {
                 },
                 Tab::HfToken => rsx! {
                     HfTokenTab {}
-                },
-                Tab::Extension => rsx! {
-                    ExtensionTab {}
                 },
                 Tab::History => rsx! {
                     HistoryTab {}
@@ -134,22 +89,16 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
     let mut is_running = use_signal(|| false);
 
     use_resource(move || async move {
-        let token_result =
-            wasm_bindgen_futures::JsFuture::from(invoke("get_hf_api_token", JsValue::NULL))
-                .await
-                .ok();
-        let token = token_result
-            .as_ref()
-            .and_then(|v| v.as_string())
+        let token = storage::get_setting("HF_API_TOKEN")
+            .await
+            .ok()
+            .flatten()
             .filter(|s| !s.trim().is_empty());
         let has_token = token.is_some();
         has_hf_token.set(has_token);
 
-        let use_ai_result =
-            wasm_bindgen_futures::JsFuture::from(invoke("get_use_ai_summary", JsValue::NULL))
-                .await
-                .ok();
-        use_ai_summary.set(use_ai_result.and_then(|v| v.as_bool()).unwrap_or(has_token));
+        let use_ai = storage::get_setting("USE_AI_SUMMARY").await.ok().flatten();
+        use_ai_summary.set(use_ai.map(|v| v == "true").unwrap_or(has_token));
     });
 
     let submit = move |event: FormEvent| async move {
@@ -163,21 +112,15 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
         is_running.set(true);
         output.set(String::new());
 
-        let args = serde_wasm_bindgen::to_value(&AddLearningArgs {
-            url: url_val,
-            date_override: date_override.read().trim().to_string(),
-            use_ai_summary: *use_ai_summary.read(),
-        })
-        .unwrap();
-
-        // invoke() rejects the promise on Err — JsFuture lets us catch it
-        // so a backend error is shown in the output box instead of crashing.
-        let result = wasm_bindgen_futures::JsFuture::from(invoke("run_add_learning", args)).await;
+        let result = crate::browser::run_add_learning_in_background(
+            &url_val,
+            date_override.read().trim(),
+            *use_ai_summary.read(),
+        )
+        .await;
         let msg = match result {
-            Ok(v) => v.as_string().unwrap_or_else(|| "Done.".to_string()),
-            Err(e) => e
-                .as_string()
-                .unwrap_or_else(|| "An unexpected error occurred.".to_string()),
+            Ok(v) => v,
+            Err(e) => e,
         };
         output.set(msg);
 
@@ -233,41 +176,16 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
                         spawn(async move {
                             if !event.checked() {
                                 use_ai_summary.set(false);
-                                let args = serde_wasm_bindgen::to_value(
-                                        &SetUseAiSummaryArgs {
-                                            value: false,
-                                        },
-                                    )
-                                    .unwrap();
-                                let _ = wasm_bindgen_futures::JsFuture::from(
-                                        invoke("set_use_ai_summary", args),
-                                    )
-                                    .await;
+                                let _ = storage::set_setting("USE_AI_SUMMARY", "false").await;
                                 return;
                             }
                             if *has_hf_token.read() {
                                 use_ai_summary.set(true);
-                                let args = serde_wasm_bindgen::to_value(
-                                        &SetUseAiSummaryArgs { value: true },
-                                    )
-                                    .unwrap();
-                                let _ = wasm_bindgen_futures::JsFuture::from(
-                                        invoke("set_use_ai_summary", args),
-                                    )
-                                    .await;
+                                let _ = storage::set_setting("USE_AI_SUMMARY", "true").await;
                                 return;
                             }
                             use_ai_summary.set(false);
-                            let args = serde_wasm_bindgen::to_value(
-                                    &SetUseAiSummaryArgs {
-                                        value: false,
-                                    },
-                                )
-                                .unwrap();
-                            let _ = wasm_bindgen_futures::JsFuture::from(
-                                    invoke("set_use_ai_summary", args),
-                                )
-                                .await;
+                            let _ = storage::set_setting("USE_AI_SUMMARY", "false").await;
                             active_tab.set(Tab::HfToken);
                         });
                     },
@@ -291,11 +209,8 @@ fn HfTokenTab() -> Element {
     let mut is_saving = use_signal(|| false);
 
     use_resource(move || async move {
-        let result =
-            wasm_bindgen_futures::JsFuture::from(invoke("get_hf_api_token", JsValue::NULL))
-                .await
-                .ok();
-        token.set(result.and_then(|v| v.as_string()).unwrap_or_default());
+        let value = storage::get_setting("HF_API_TOKEN").await.ok().flatten();
+        token.set(value.unwrap_or_default());
     });
 
     let save_token = move |event: FormEvent| async move {
@@ -303,17 +218,10 @@ fn HfTokenTab() -> Element {
         is_saving.set(true);
         status.set(String::new());
 
-        let args = serde_wasm_bindgen::to_value(&SetTokenArgs {
-            value: token.read().trim().to_string(),
-        })
-        .unwrap();
-        let result = wasm_bindgen_futures::JsFuture::from(invoke("set_hf_api_token", args)).await;
+        let result = storage::set_setting("HF_API_TOKEN", token.read().trim()).await;
 
         match result {
-            Err(e) => status.set(format!(
-                "Error: {}",
-                e.as_string().unwrap_or_else(|| "unknown".to_string())
-            )),
+            Err(e) => status.set(format!("Error: {e}")),
             _ => status.set("✓ HF token saved locally.".to_string()),
         }
 
@@ -353,73 +261,6 @@ fn HfTokenTab() -> Element {
     }
 }
 
-// ── Extension tab ─────────────────────────────────────────────────────────────
-
-fn ExtensionTab() -> Element {
-    let mut status = use_signal(|| String::new());
-    let mut is_busy = use_signal(|| false);
-
-    let open_folder = move |_| async move {
-        is_busy.set(true);
-        status.set(String::new());
-
-        let result =
-            wasm_bindgen_futures::JsFuture::from(invoke("open_extension_folder", JsValue::NULL))
-                .await;
-
-        match result {
-            Err(e) => status.set(format!(
-                "Error: {}",
-                e.as_string().unwrap_or_else(|| "unknown".to_string())
-            )),
-            _ => status.set(
-                "✓ Extension folder opened. Follow the steps below to load it in Chrome."
-                    .to_string(),
-            ),
-        }
-
-        is_busy.set(false);
-    };
-
-    rsx! {
-        p { class: "subtitle",
-            "Install the companion extension once — it auto-fills the form on every run."
-        }
-
-        ol { class: "install-steps",
-            li { "Click the button below — it opens the extension folder in Finder/Explorer." }
-            li {
-                "In Chrome, go to "
-                span { class: "mono", "chrome://extensions" }
-                " and enable "
-                strong { "Developer mode" }
-                " (top-right toggle)."
-            }
-            li {
-                "Click "
-                strong { "Load unpacked" }
-                " and select the opened folder."
-            }
-            li { "Done! The extension is now active for yourlearning.ibm.com." }
-        }
-
-        button {
-            class: "btn-primary",
-            disabled: *is_busy.read(),
-            onclick: open_folder,
-            if *is_busy.read() {
-                "Exporting…"
-            } else {
-                "Open Extension Folder"
-            }
-        }
-
-        if !status.read().is_empty() {
-            p { class: "status-msg", "{status}" }
-        }
-    }
-}
-
 // ── History tab ───────────────────────────────────────────────────────────────
 
 fn HistoryTab() -> Element {
@@ -427,15 +268,9 @@ fn HistoryTab() -> Element {
     let mut error = use_signal(|| String::new());
 
     use_resource(move || async move {
-        match wasm_bindgen_futures::JsFuture::from(invoke("get_history", JsValue::NULL)).await {
-            Ok(result) => match serde_wasm_bindgen::from_value::<Vec<HistoryEntry>>(result) {
-                Ok(list) => entries.set(list),
-                Err(e) => error.set(format!("Could not load history: {e}")),
-            },
-            Err(e) => error.set(format!(
-                "Could not load history: {}",
-                e.as_string().unwrap_or_else(|| "unknown".to_string())
-            )),
+        match storage::get_history(50).await {
+            Ok(list) => entries.set(list),
+            Err(e) => error.set(format!("Could not load history: {e}")),
         }
     });
 
@@ -519,7 +354,7 @@ fn HelpTab() -> Element {
                 }
                 li {
                     strong { "The extension fills the form. " }
-                    "The companion Chrome extension reads the data and populates every field automatically. "
+                    "This extension's content script reads the data and populates every field automatically. "
                     "Review the details, then submit."
                 }
             }
@@ -529,10 +364,9 @@ fn HelpTab() -> Element {
             div { class: "faq-item",
                 p { class: "faq-q", "The form didn't auto-fill — what happened?" }
                 p { class: "faq-a",
-                    "The extension is probably not installed or not enabled. "
-                    "Go to the "
-                    em { "Install Extension" }
-                    " tab and follow the steps."
+                    "Make sure the extension is enabled in "
+                    span { class: "mono", "chrome://extensions" }
+                    ", then try adding the learning again."
                 }
             }
 

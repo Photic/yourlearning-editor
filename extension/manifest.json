@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "YourLearning Editor",
+  "version": "0.2.1",
+  "description": "Fetches metadata for YouTube, podcasts, and articles, and auto-fills the YourLearning Add Personal Learning form.",
+  "action": {
+    "default_popup": "index.html"
+  },
+  "permissions": ["storage"],
+  "content_scripts": [
+    {
+      "matches": ["https://yourlearning.ibm.com/add-learning*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  }
+}
