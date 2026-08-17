@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "OWLS",
-  "version": "0.2.3",
+  "version": "1.0.0",
   "description": "Fetches metadata for YouTube, podcasts, and articles, and auto-fills the YourLearning Add Personal Learning form.",
   "action": {
     "default_popup": "index.html",
