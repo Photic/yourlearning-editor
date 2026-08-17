@@ -7,6 +7,13 @@ set -euo pipefail
 
 dx bundle --release
 
+# dx's generated index.html preloads the module script with `crossorigin`,
+# but the <script type="module"> tag that actually loads it doesn't carry
+# that attribute — on a chrome-extension:// page the mismatch makes Chrome
+# log a "cross-world extension resource mismatch" warning and re-fetch the
+# script instead of reusing the preload. It's just a perf hint, so drop it.
+sed -i '' -E 's#<link rel="preload" as="script" href="[^"]*" crossorigin>##' dist/public/index.html
+
 # The background worker isn't a Dioxus "app" (no UI, no asset_dir usage), so
 # it's built as a plain wasm binary via `dx build --bin` rather than
 # `dx bundle`, which skips the HTML-app packaging we don't need here.
