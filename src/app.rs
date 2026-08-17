@@ -344,16 +344,55 @@ fn HfTokenTab() -> Element {
 fn HistoryTab() -> Element {
     let mut entries: Signal<Vec<HistoryEntry>> = use_signal(Vec::new);
     let mut error = use_signal(|| String::new());
+    let mut confirming_clear = use_signal(|| false);
 
     use_resource(move || async move {
-        match storage::get_history(50).await {
+        match storage::get_all_history().await {
             Ok(list) => entries.set(list),
             Err(e) => error.set(format!("Could not load history: {e}")),
         }
     });
 
     rsx! {
-        p { class: "subtitle", "Your last 50 learnings added via OWLS." }
+        div { class: "history-header",
+            p { class: "subtitle", "Your learnings added via OWLS." }
+            if !entries.read().is_empty() {
+                button {
+                    class: "btn-danger",
+                    r#type: "button",
+                    onclick: move |_| confirming_clear.set(true),
+                    "Clear History"
+                }
+            }
+        }
+
+        if *confirming_clear.read() {
+            div { class: "confirm-row",
+                span { "Clear all history? This can't be undone." }
+                button {
+                    class: "btn-danger",
+                    r#type: "button",
+                    onclick: move |_| {
+                        spawn(async move {
+                            error.set(String::new());
+                            match storage::clear_history().await {
+                                Ok(()) => {
+                                    entries.set(Vec::new());
+                                    confirming_clear.set(false);
+                                }
+                                Err(e) => error.set(format!("Could not clear history: {e}")),
+                            }
+                        });
+                    },
+                    "Yes, clear it"
+                }
+                button {
+                    r#type: "button",
+                    onclick: move |_| confirming_clear.set(false),
+                    "Cancel"
+                }
+            }
+        }
 
         if !error.read().is_empty() {
             p { class: "status-msg", "{error}" }

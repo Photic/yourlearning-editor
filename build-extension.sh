@@ -42,6 +42,7 @@ cp "$BG_WASM" dist/public/background_bg.wasm
 sed "s#/\\./assets/$(basename "$BG_WASM")#./background_bg.wasm#" "$BG_JS" > dist/public/background_wasm.js
 
 cp extension/manifest.json extension/background.js extension/content.js dist/public/
+cp extension/icon16.png extension/icon32.png extension/icon48.png extension/icon128.png dist/public/
 
 echo ""
 echo "✓ Extension assembled at dist/public"

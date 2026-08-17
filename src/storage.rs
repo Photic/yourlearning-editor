@@ -1,3 +1,4 @@
+use dioxus_logger::tracing;
 use js_sys::{Array, Object, Promise, Reflect};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -12,7 +13,6 @@ extern "C" {
 }
 
 const HISTORY_KEY: &str = "learning_history";
-const HISTORY_LIMIT: usize = 50;
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -79,6 +79,9 @@ pub async fn add_history(
     info: Option<AnalyticsInfo>,
 ) -> Result<(), String> {
     let mut entries = get_all_history().await?;
+    // An entry with a matching title is replaced by the new one and bumped
+    // to the top, rather than kept alongside it or left stale further down.
+    entries.retain(|entry| entry.title != title);
     entries.insert(
         0,
         HistoryEntry {
@@ -92,15 +95,50 @@ pub async fn add_history(
             info,
         },
     );
-    entries.truncate(HISTORY_LIMIT);
+    // No fixed cap: keep growing history until Chrome's real storage quota
+    // is hit, then evict the oldest entry (last element — index 0 is
+    // newest) and retry, repeating as many times as needed until the save
+    // fits or there's nothing left to evict but the entry we're adding.
+    loop {
+        let value = serde_wasm_bindgen::to_value(&entries).map_err(|e| e.to_string())?;
+        let items = Object::new();
+        Reflect::set(&items, &JsValue::from_str(HISTORY_KEY), &value).map_err(|e| js_err(&e))?;
 
+        match set_items(items).await {
+            Ok(()) => return Ok(()),
+            Err(err) if is_quota_error(&err) && entries.len() > 1 => {
+                entries.pop(); // drop the oldest entry, retry with a smaller payload
+                tracing::debug!(
+                    "[storage] history save hit quota; evicted oldest entry, {} left, retrying",
+                    entries.len()
+                );
+            }
+            Err(err) => {
+                tracing::warn!("[storage] failed to save history entry: {err}");
+                return Err(err);
+            }
+        }
+    }
+}
+
+/// True if a `chrome.storage.local` rejection message looks like a
+/// quota-exceeded error (Chromium's own text is "QUOTA_BYTES quota
+/// exceeded").
+fn is_quota_error(message: &str) -> bool {
+    message.to_lowercase().contains("quota")
+}
+
+/// Deletes all stored history entries.
+pub async fn clear_history() -> Result<(), String> {
+    let entries: Vec<HistoryEntry> = Vec::new();
     let value = serde_wasm_bindgen::to_value(&entries).map_err(|e| e.to_string())?;
     let items = Object::new();
     Reflect::set(&items, &JsValue::from_str(HISTORY_KEY), &value).map_err(|e| js_err(&e))?;
     set_items(items).await
 }
 
-async fn get_all_history() -> Result<Vec<HistoryEntry>, String> {
+/// Returns every stored history entry, newest first.
+pub async fn get_all_history() -> Result<Vec<HistoryEntry>, String> {
     let result = get_keys(&[HISTORY_KEY]).await?;
     let value = Reflect::get(&result, &JsValue::from_str(HISTORY_KEY)).map_err(|e| js_err(&e))?;
     if value.is_undefined() {
@@ -133,8 +171,14 @@ async fn set_items(items: Object) -> Result<(), String> {
         .map_err(|e| js_err(&e))
 }
 
+/// Extracts a human-readable message from a JS rejection value. Chrome
+/// extension APIs reject `Promise`s with `Error` objects (not bare
+/// strings), so read `.message` first; fall back to treating the value
+/// itself as a string, then to a generic message.
 fn js_err(value: &JsValue) -> String {
-    value
-        .as_string()
+    Reflect::get(value, &JsValue::from_str("message"))
+        .ok()
+        .and_then(|m| m.as_string())
+        .or_else(|| value.as_string())
         .unwrap_or_else(|| "unknown storage error".to_string())
 }

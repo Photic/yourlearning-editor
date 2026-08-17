@@ -309,6 +309,40 @@ button {
   font-size: 0.95em;
 }
 
+.history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  margin-bottom: 1rem;
+}
+
+.history-header .subtitle {
+  margin-bottom: 0;
+}
+
+.btn-danger {
+  background-color: #d83939;
+  color: #fff;
+  border-color: #d83939;
+  flex-shrink: 0;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background-color: #bf2d2d;
+  border-color: #bf2d2d;
+}
+
+.confirm-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 1rem;
+  font-size: 0.9em;
+}
+
 .history-list {
   width: 100%;
   text-align: left;
