@@ -59,21 +59,128 @@ pub(crate) fn is_youtube_url(url: &str) -> bool {
 
 /// Returns true if `url` matches one of the learning paths above that fetch
 /// their own metadata directly (YouTube, Apple Podcasts, Spotify, RSS,
-/// Vimeo) rather than needing the page's rendered DOM.
+/// Vimeo, known article publishers) rather than needing the page's rendered
+/// DOM.
 ///
 /// There's no reliable way to detect from a URL alone whether a page sits
 /// behind a login or is otherwise sensitive — a content script can't inspect
 /// auth state or document classification before rendering it. So rather than
 /// try to flag "sensitive" pages, this flips the check around: only pages we
-/// already know how to read *without* touching their DOM or sending them to
-/// a third party get to skip the focus-page consent prompt. Everything else
-/// — including pages we've simply never seen before — still asks.
+/// already know how to read *without* touching their DOM get to skip the
+/// focus-page consent prompt. Everything else — including pages we've simply
+/// never seen before — still asks.
 pub fn is_known_learning_url(url: &str) -> bool {
     is_youtube_url(url)
         || url.contains("podcasts.apple.com")
         || url.contains("open.spotify.com/episode/")
         || is_rss_feed_url(url)
         || is_vimeo_url(url)
+        || is_known_article_url(url)
+}
+
+/// Returns true for a curated set of well-known article/blog/news publishers.
+/// `article::run_article` fetches these pages directly over HTTP rather than
+/// reading the active tab's DOM, so recognizing them here lets
+/// `is_known_learning_url` skip the focus-page consent prompt the same way
+/// it does for YouTube, podcasts, RSS feeds, and Vimeo. Deliberately kept to
+/// major, unambiguous publishers — obscure or personal blogs still fall
+/// through to the DOM-reading path and its consent prompt.
+fn is_known_article_url(url: &str) -> bool {
+    let lower = url.to_lowercase();
+    let article_domains = [
+        // Publishing platforms / reference
+        "medium.com",
+        "substack.com",
+        "dev.to",
+        "hashnode.com",
+        "wikipedia.org",
+        "britannica.com",
+        // General news
+        "nytimes.com",
+        "washingtonpost.com",
+        "theguardian.com",
+        "bbc.com",
+        "bbc.co.uk",
+        "reuters.com",
+        "bloomberg.com",
+        "wsj.com",
+        "ft.com",
+        "cnn.com",
+        "npr.org",
+        "apnews.com",
+        "economist.com",
+        "time.com",
+        "usatoday.com",
+        "latimes.com",
+        "politico.com",
+        "axios.com",
+        "vox.com",
+        "slate.com",
+        "theatlantic.com",
+        "newyorker.com",
+        "nbcnews.com",
+        "cbsnews.com",
+        "abcnews.go.com",
+        "aljazeera.com",
+        "newsweek.com",
+        // Business
+        "forbes.com",
+        "fortune.com",
+        "hbr.org",
+        "fastcompany.com",
+        "businessinsider.com",
+        "cnbc.com",
+        "inc.com",
+        "entrepreneur.com",
+        // Tech news
+        "wired.com",
+        "techcrunch.com",
+        "arstechnica.com",
+        "theverge.com",
+        "engadget.com",
+        "venturebeat.com",
+        "gizmodo.com",
+        "zdnet.com",
+        "cnet.com",
+        "thenextweb.com",
+        "techradar.com",
+        "tomshardware.com",
+        "mashable.com",
+        // Science
+        "nature.com",
+        "scientificamerican.com",
+        "newscientist.com",
+        "phys.org",
+        "quantamagazine.org",
+        "sciencedaily.com",
+        "spectrum.ieee.org",
+        // Developer / engineering blogs
+        "smashingmagazine.com",
+        "css-tricks.com",
+        "freecodecamp.org",
+        "infoq.com",
+        "stackoverflow.blog",
+        "martinfowler.com",
+        "realpython.com",
+        // Company engineering / newsroom blogs
+        "github.blog",
+        "netflixtechblog.com",
+        "engineering.fb.com",
+        "developer.ibm.com",
+        "ibm.com/blog",
+        "aws.amazon.com/blogs",
+        "blogs.microsoft.com",
+        "news.microsoft.com",
+        "techcommunity.microsoft.com",
+        "blog.google",
+        "developers.googleblog.com",
+        "cloud.google.com/blog",
+        "engineering.atspotify.com",
+        "shopify.engineering",
+        "slack.engineering",
+        "eng.uber.com",
+    ];
+    article_domains.iter().any(|d| lower.contains(d))
 }
 
 /// Returns true if the URL looks like a direct podcast RSS feed rather than a
