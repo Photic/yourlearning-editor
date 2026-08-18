@@ -104,7 +104,7 @@ via `chrome.runtime.sendMessage` and awaits the result.
 
 ## Project Layout
 
-```
+```text
 src/                    # One crate (`owls-ui`), two WASM binary targets
   main.rs               # Popup entry point — launches the Dioxus app
   app.rs                # Every UI component, tab, and the toast system
@@ -200,6 +200,17 @@ the right edge of the viewport that expands into a card on hover.
   the same key the popup's checkbox writes; unset means off. It sends an empty
   `dateOverride` (i.e. today), since the date field is transient popup state
   and the rail has nowhere to put a date picker.
+- **Fullscreen** — `fullscreenchange` (and the `webkit` variant) toggles
+  `display: none` on the dock, so the rail disappears while a video is playing
+  edge to edge. Chrome hides it for free in the common case, because the
+  fullscreen element is promoted to the top layer and paints above everything
+  else regardless of z-index — but that only holds while the panel is *outside*
+  the fullscreen element. A player that fullscreens the whole document
+  (`documentElement.requestFullscreen()`) makes the panel a descendant of the
+  fullscreen element, and it then renders on top of the video; verified by
+  hit-testing the rail's centre point with and without the handler. Embeds are
+  covered too: an iframe going fullscreen sets the *host* document's
+  `fullscreenElement`, and the top frame is the only one running this script.
 
 Adding this cost no new install-time permission warnings: the manifest already
 declared `host_permissions: ["<all_urls>"]` for the fetch paths, which is the

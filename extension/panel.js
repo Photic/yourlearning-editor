@@ -77,6 +77,9 @@
       -webkit-font-smoothing: antialiased;
     }
 
+    /* Applied while the page is in fullscreen — see syncFullscreen below. */
+    .dock.is-hidden { display: none; }
+
     .rail {
       width: 4px;
       height: 64px;
@@ -352,5 +355,38 @@
     if (collapseTimer !== null || dock.classList.contains("is-open")) renderIdle();
   });
 
+  // ── Fullscreen ─────────────────────────────────────────────────────────────
+
+  /// Hides the rail while the page is in fullscreen — a video playing edge to
+  /// edge is the clearest possible "get out of the way" signal, and a blue
+  /// sliver over the corner of a film is exactly the kind of thing that makes
+  /// people uninstall an extension.
+  ///
+  /// Chrome usually hides it for free: the fullscreen element is promoted to
+  /// the top layer, which paints above everything else in the document no
+  /// matter what z-index they claim. But that only holds when the panel sits
+  /// *outside* the fullscreen element. Players that fullscreen the whole
+  /// document (`documentElement.requestFullscreen()`) make the panel a
+  /// descendant of the fullscreen element, and then it does render on top. So
+  /// this is doing real work in that case, and is cheap insurance in the rest.
+  ///
+  /// Only the top frame runs this script (`all_frames: false`), which is also
+  /// where fullscreen is reported for an embedded player: a YouTube iframe
+  /// going fullscreen sets the *host* document's `fullscreenElement` to the
+  /// iframe, so embeds are covered too.
+  function syncFullscreen() {
+    // `webkitFullscreenElement` is checked as well because some players still
+    // call the prefixed request method; the unprefixed property isn't
+    // guaranteed to be populated when they do.
+    const fullscreen = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+    dock.classList.toggle("is-hidden", fullscreen);
+  }
+
+  document.addEventListener("fullscreenchange", syncFullscreen);
+  document.addEventListener("webkitfullscreenchange", syncFullscreen);
+
   renderIdle();
+  // Run once at startup too: this script injects at `document_idle`, which on a
+  // slow page can land after the user has already gone fullscreen.
+  syncFullscreen();
 })();
