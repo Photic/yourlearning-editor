@@ -16,16 +16,40 @@ This file provides context for any AI agent working on this project. **Keep it u
 - Spotify Episodes (`open.spotify.com/episode/`)
 - Vimeo (`vimeo.com/`)
 - RSS/podcast feeds (well-known feed hosts, `/feed`, `.rss`, `.xml`)
-- Articles (any other `https://` URL)
+- Articles (any other `https://` URL) — fetched via Jina Reader
+  (`GET https://r.jina.ai/<url>`), which server-side renders JS-heavy pages.
+  If Jina's own crawler can't reach the page (some sites answer it with a bot
+  check it can't clear), the URL is loaded in an inactive background tab and
+  that tab's rendered HTML is POSTed to Jina instead.
 - **Focus page** — instead of pasting a URL, the "Add Page Learning" button in
-  the popup reads the DOM of the browser's currently active tab (only on that
-  explicit click — never passively) and interprets its rendered text as the
-  learning entry. Requires the `scripting` extension permission. When AI
-  summary is on (and an HF token is configured), the page's raw HTML is also
-  sent to Jina Reader (`POST https://r.jina.ai/` with an `html` field) for a
-  proper readability extraction instead of relying on raw `innerText` —
-  gated behind the same consent toast as the Hugging Face summary itself,
-  since it's the same category of third-party send.
+  the popup captures the DOM of the browser's currently active tab (only on
+  that explicit click — never passively). Requires the `scripting` extension
+  permission.
+
+**Page content is always interpreted by Jina, never parsed here.** Captured
+HTML goes to `POST https://r.jina.ai/` as `{"html": …, "url": …}` (the `url`
+lets Reader resolve relative links); the response's `Title:`,
+`Published Time:`, and `Markdown Content:` fields are what the app uses. Site
+structure varies too much to parse locally, and raw `innerText` can't
+separate nav/ads/boilerplate from the article. A response with no
+`Markdown Content:` marker is rejected rather than used — that's what a
+Cloudflare "Just a moment…" interstitial looks like.
+
+Only YouTube/Apple/Spotify/RSS/Vimeo URLs bypass the capture entirely (their
+handlers pull structured metadata from dedicated APIs and feeds, sending
+nothing to Jina). Article publishers on the known-domains list skip the
+*consent prompt* but are still captured and sent — a rendered tab has already
+cleared any bot check, which a server-side fetch of the same URL cannot be
+relied on to do.
+
+**Consent** — since reading a page always sends its content to Jina, the
+confirmation toast fires for any site not on the known list, regardless of the
+AI-summary toggle; the toggle only changes whether Hugging Face is named in
+the message too.
+
+**Entry date** — a date typed by the user wins; otherwise the article's own
+publication date (Jina's `Published Time:`) is used; today's date is the
+fallback only when the page reports no date.
 
 ---
 

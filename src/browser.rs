@@ -10,6 +10,12 @@ extern "C" {
     #[wasm_bindgen(js_namespace = ["chrome", "tabs"], js_name = query)]
     fn tabs_query(query_info: JsValue) -> js_sys::Promise;
 
+    #[wasm_bindgen(js_namespace = ["chrome", "tabs"], js_name = get)]
+    fn tabs_get(tab_id: i32) -> js_sys::Promise;
+
+    #[wasm_bindgen(js_namespace = ["chrome", "tabs"], js_name = remove)]
+    fn tabs_remove(tab_id: i32) -> js_sys::Promise;
+
     #[wasm_bindgen(js_namespace = ["chrome", "scripting"], js_name = executeScript)]
     fn scripting_execute_script(injection: JsValue) -> js_sys::Promise;
 
@@ -62,6 +68,62 @@ pub async fn open_tab(url: &str) -> Result<(), String> {
         .await
         .map(|_| ())
         .map_err(|e| js_err(&e))
+}
+
+/// Opens `url` in a background tab, waits for it to finish loading, reads its
+/// rendered DOM, and closes the tab again.
+///
+/// A real browser tab runs the page's JS and clears bot checks that a
+/// server-side fetch of the same URL can't, so this is the fallback for pages
+/// no headless fetch can retrieve. The tab is created inactive so it doesn't
+/// steal focus, and is always closed again — including when the read fails.
+pub async fn read_url_in_background_tab(url: &str) -> Result<PageDom, String> {
+    let properties = Object::new();
+    Reflect::set(&properties, &"url".into(), &url.into()).map_err(|e| js_err(&e))?;
+    Reflect::set(&properties, &"active".into(), &false.into()).map_err(|e| js_err(&e))?;
+
+    let tab = wasm_bindgen_futures::JsFuture::from(tabs_create(properties.into()))
+        .await
+        .map_err(|e| js_err(&e))?;
+    let tab_id = Reflect::get(&tab, &"id".into())
+        .ok()
+        .and_then(|v| v.as_f64())
+        .ok_or_else(|| "Opened tab has no id.".to_string())? as i32;
+
+    let result = wait_for_tab_then_read(tab_id).await;
+
+    let _ = wasm_bindgen_futures::JsFuture::from(tabs_remove(tab_id)).await;
+
+    result
+}
+
+/// Polls `tab_id` until Chrome reports it fully loaded, then reads its DOM.
+/// The extra settle time after `complete` covers client-rendered pages (and
+/// bot-check interstitials that redirect themselves) which have loaded the
+/// document but not yet painted the content worth reading.
+async fn wait_for_tab_then_read(tab_id: i32) -> Result<PageDom, String> {
+    const POLL_MS: i32 = 500;
+    const MAX_POLLS: usize = 60; // 30s ceiling
+    const SETTLE_MS: i32 = 2_000;
+
+    for _ in 0..MAX_POLLS {
+        sleep(POLL_MS).await;
+
+        let tab = wasm_bindgen_futures::JsFuture::from(tabs_get(tab_id))
+            .await
+            .map_err(|e| js_err(&e))?;
+        let status = Reflect::get(&tab, &"status".into())
+            .ok()
+            .and_then(|v| v.as_string())
+            .unwrap_or_default();
+
+        if status == "complete" {
+            sleep(SETTLE_MS).await;
+            return read_page_dom(tab_id).await;
+        }
+    }
+
+    Err("Timed out waiting for the page to load.".to_string())
 }
 
 /// Hands the add-learning request off to the background service worker (via
@@ -158,8 +220,8 @@ pub struct PageDom {
     /// whitespace. The cheap, always-available extraction.
     pub text: String,
     /// `document.documentElement.outerHTML` — the raw markup, for callers
-    /// that want to run it through a proper readability pass (e.g. Jina
-    /// Reader) instead of settling for `text`.
+    /// that want to run it through a proper readability pass instead of
+    /// settling for `text`.
     pub html: String,
 }
 

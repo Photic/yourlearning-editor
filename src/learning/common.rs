@@ -1,7 +1,8 @@
-use super::{apple_podcast, article, focus_page, rss_podcast, spotify_podcast, vimeo, youtube};
+use super::{apple_podcast, article, rss_podcast, spotify_podcast, vimeo, youtube};
 use crate::browser::sleep;
 use crate::{browser, http, storage};
 use dioxus_logger::tracing;
+use dom_smoothie::{Article, Config, Readability};
 
 pub(crate) const YOURLEARNING_URL: &str = "https://yourlearning.ibm.com/add-learning";
 const PENDING_ADD_LEARNING_KEY: &str = "PENDING_ADD_LEARNING";
@@ -46,7 +47,7 @@ pub async fn run_add_learning(url: &str, date_override: &str, use_ai_summary: bo
 /// text as a learning entry. Unlike `run_add_learning`, there's no URL to
 /// route on — the source is whatever page the user is already looking at.
 pub async fn run_focus_page_learning(date_override: &str, use_ai_summary: bool) -> Result<(), String> {
-    focus_page::run_focus_page_learning(date_override, use_ai_summary).await
+    article::run_focus_page(date_override, use_ai_summary).await
 }
 
 /// Returns true for YouTube watch pages (both the standard `youtube.com/watch`
@@ -70,21 +71,34 @@ pub(crate) fn is_youtube_url(url: &str) -> bool {
 /// focus-page consent prompt. Everything else — including pages we've simply
 /// never seen before — still asks.
 pub fn is_known_learning_url(url: &str) -> bool {
+    is_self_fetching_media_url(url) || is_known_article_url(url)
+}
+
+/// Returns true for the sources whose handlers pull structured metadata from
+/// a dedicated API or feed (YouTube, Apple Podcasts, Spotify, RSS, Vimeo) —
+/// i.e. the ones that genuinely have nothing to gain from the page's DOM.
+///
+/// Article publishers are deliberately *not* included: recognizing one is
+/// only reason enough to skip the consent prompt, never reason to throw away
+/// a rendered DOM we already have. When the user is looking at an article, a
+/// real browser tab has already run its JS and cleared any bot check, so its
+/// DOM beats anything a server-side fetch of the same URL can retrieve.
+pub(crate) fn is_self_fetching_media_url(url: &str) -> bool {
     is_youtube_url(url)
         || url.contains("podcasts.apple.com")
         || url.contains("open.spotify.com/episode/")
         || is_rss_feed_url(url)
         || is_vimeo_url(url)
-        || is_known_article_url(url)
 }
 
-/// Returns true for a curated set of well-known article/blog/news publishers.
-/// `article::run_article` fetches these pages directly over HTTP rather than
-/// reading the active tab's DOM, so recognizing them here lets
-/// `is_known_learning_url` skip the focus-page consent prompt the same way
-/// it does for YouTube, podcasts, RSS feeds, and Vimeo. Deliberately kept to
-/// major, unambiguous publishers — obscure or personal blogs still fall
-/// through to the DOM-reading path and its consent prompt.
+/// Returns true for a curated set of well-known article/blog/news publishers
+/// — public pages whose content carries no expectation of privacy, so
+/// `is_known_learning_url` lets them skip the focus-page consent prompt the
+/// same way YouTube, podcasts, RSS feeds, and Vimeo do. Deliberately kept to
+/// major, unambiguous publishers — obscure or personal blogs still ask first.
+///
+/// This governs *only* the prompt. Matching here doesn't change how the page
+/// is read: articles go through the DOM-reading path either way.
 fn is_known_article_url(url: &str) -> bool {
     let lower = url.to_lowercase();
     let article_domains = [
@@ -235,41 +249,26 @@ fn is_vimeo_url(url: &str) -> bool {
 
 // ── HF Inference API (bart-large-cnn) ────────────────────────────────────────
 
-/// Number of retries after a network/timeout failure, before giving up.
-const HF_MAX_NETWORK_RETRIES: u32 = 2;
-/// Base delay for the exponential backoff between retries: 1s, 2s, ...
-const HF_RETRY_BASE_DELAY_MS: i32 = 1_000;
-
-/// POSTs to `url`, retrying on network/timeout failures with exponential
-/// backoff up to `HF_MAX_NETWORK_RETRIES` times. This only covers transport
-/// failures (e.g. the request never got a response) — HF's own "model
-/// loading" error payload comes back as `Ok` and is handled by the caller.
-async fn post_json_with_retry(
+/// POSTs to `url` once and gives up on the first transport failure. The
+/// summary is a nice-to-have on an entry that gets created either way, so a
+/// slow or unreachable HF is worth reporting straight away rather than
+/// retrying while the user sits waiting on it.
+async fn post_json_once(
     url: &str,
     headers: &[(&str, &str)],
     body: &serde_json::Value,
     timeout_ms: u32,
 ) -> Result<String, String> {
-    let mut attempt = 0;
-    loop {
-        match http::post_json(url, headers, body, timeout_ms).await {
-            Ok(raw) => return Ok(raw),
-            Err(e) if attempt < HF_MAX_NETWORK_RETRIES => {
-                let delay_ms = HF_RETRY_BASE_DELAY_MS * 2i32.pow(attempt);
-                tracing::debug!(
-                    "[HF] Request failed ({e}) — retrying in {delay_ms}ms (attempt {}/{})",
-                    attempt + 1,
-                    HF_MAX_NETWORK_RETRIES
-                );
-                sleep(delay_ms).await;
-                attempt += 1;
-            }
-            Err(e) => {
-                tracing::debug!("[HF] Request failed after {} attempts: {e}", attempt + 1);
-                return Err("Connection to HuggingFace failed. Please try again.".to_string());
-            }
-        }
-    }
+    http::post_json(url, headers, body, timeout_ms).await.map_err(|e| {
+        tracing::debug!("[HF] Request failed: {e}");
+        // Phrased for the history entry this ends up attached to: the entry
+        // itself was created, and only the description is missing — say so,
+        // rather than leaving the reader to wonder what survived.
+        format!(
+            "AI summary skipped — HuggingFace didn't respond within {}s. The entry was saved without a description.",
+            timeout_ms / 1_000
+        )
+    })
 }
 
 /// Returns the HuggingFace API token stored in extension settings.
@@ -308,7 +307,7 @@ pub(crate) async fn summarize_with_bart(text: &str) -> Result<Option<String>, St
     let auth_header = format!("Bearer {token}");
 
     // First attempt — fast path (model already warm).
-    let raw = post_json_with_retry(
+    let raw = post_json_once(
         "https://router.huggingface.co/hf-inference/models/facebook/bart-large-cnn",
         &[("Authorization", auth_header.as_str())],
         &serde_json::json!({ "inputs": input }),
@@ -328,7 +327,7 @@ pub(crate) async fn summarize_with_bart(text: &str) -> Result<Option<String>, St
         tracing::debug!("[HF] Model loading — waiting {wait_secs:.0}s then retrying…");
         sleep((wait_secs.min(60.0) * 1000.0) as i32).await;
 
-        let raw2 = post_json_with_retry(
+        let raw2 = post_json_once(
             "https://router.huggingface.co/hf-inference/models/facebook/bart-large-cnn",
             &[
                 ("Authorization", auth_header.as_str()),
@@ -412,48 +411,70 @@ pub(crate) fn split_duration(secs: u64) -> (u64, u64) {
     (secs / 3600, (secs % 3600) / 60)
 }
 
-// ── Jina Reader ───────────────────────────────────────────────────────────────
+// ── Article extraction ────────────────────────────────────────────────────────
 
-/// Parses a Jina Reader response into (title, body) — shared by every caller
-/// of `https://r.jina.ai/`, whichever mode they used to get there (fetching a
-/// URL themselves, or POSTing raw HTML for Jina to parse).
+/// The shortest body worth treating as a real extraction. Below this, what
+/// came back is boilerplate — a bot-check interstitial, a consent wall, or a
+/// page whose content never rendered — not an article.
+const MIN_ARTICLE_WORDS: usize = 50;
+
+/// A readable article recovered from a page's markup.
+pub(crate) struct ArticleDoc {
+    pub title: String,
+    pub body: String,
+    /// The article's own publication date as `YYYY/MM/DD`, when the page
+    /// carried a usable timestamp in its metadata.
+    pub published: Option<String>,
+}
+
+/// Extracts the readable article out of `html` with a local readability pass
+/// — the same scoring approach as Firefox's Reader View, run inside the
+/// extension. Nothing is fetched and nothing is sent anywhere: `url` only
+/// resolves relative links while the document is scored.
 ///
-/// Response format:
-///   Title: <title>
-///   URL Source: <url>
-///   <blank line>
-///   Markdown Content:
-///   <body text>
-///
-/// Returns `None` if the body looks too thin to be a real extraction (Jina
-/// choked on the input, or the page genuinely had nothing worth reading).
-pub(crate) fn parse_jina_response(text: &str) -> Option<(String, String)> {
-    let mut title = String::new();
-    let mut body_start = 0usize;
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if let Some(t) = trimmed.strip_prefix("Title:") {
-            title = t.trim().to_string();
-        }
-        if trimmed == "Markdown Content:" {
-            body_start = text.find("Markdown Content:")
-                .map(|i| i + "Markdown Content:".len())
-                .unwrap_or(0);
-            break;
-        }
+/// Returns `Err` when the markup yields no article at all, or a body too thin
+/// to be one, so the caller can fall back to a source that does have the
+/// content.
+pub(crate) fn extract_article(html: &str, url: &str) -> Result<ArticleDoc, String> {
+    let mut readability = Readability::new(html, Some(url), Some(Config::default()))
+        .map_err(|e| format!("Could not parse the page's markup: {e}"))?;
+    let article: Article = readability
+        .parse()
+        .map_err(|e| format!("No readable article found on the page: {e}"))?;
+
+    let body = article.text_content.trim().to_string();
+    let words = body.split_whitespace().count();
+    if words < MIN_ARTICLE_WORDS {
+        return Err(format!("The page yielded only {words} words of readable text."));
     }
 
-    let body = if body_start > 0 {
-        text[body_start..].trim().to_string()
-    } else {
-        text.to_string()
-    };
+    Ok(ArticleDoc {
+        title: article.title.trim().to_string(),
+        body,
+        published: article.published_time.as_deref().and_then(normalize_date),
+    })
+}
 
-    if body.split_whitespace().count() < 50 {
-        return None;
+/// Normalises a timestamp to the `YYYY/MM/DD` form the YourLearning form
+/// expects. Handles both shapes pages actually publish: ISO-8601 and anything
+/// prefixed by it (`2024-08-30`, `2024-08-30T00:00:00Z`), and RFC 2822
+/// (`Fri, 07 Aug 2026 14:10:46 GMT`), which HTTP headers and a good many CMSs
+/// emit. Returns `None` for anything that isn't a real date, so a junk value
+/// falls through to the caller's own default rather than being filled in
+/// verbatim.
+fn normalize_date(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+
+    if let Some(date) = raw
+        .get(..10)
+        .and_then(|candidate| chrono::NaiveDate::parse_from_str(candidate, "%Y-%m-%d").ok())
+    {
+        return Some(date.format("%Y/%m/%d").to_string());
     }
 
-    Some((title, body))
+    chrono::DateTime::parse_from_rfc2822(raw)
+        .ok()
+        .map(|dt| dt.format("%Y/%m/%d").to_string())
 }
 
 /// Builds the analytics block for a plain "Description" body of text — the

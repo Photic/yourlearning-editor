@@ -220,8 +220,18 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
     let toast: Signal<Option<Toast>> = use_context();
 
     let refresh_last_entry = move || async move {
-        if let Ok(mut entries) = storage::get_history(1).await {
-            last_entry.set(entries.pop());
+        let entry = storage::get_history(1).await.ok().and_then(|mut entries| entries.pop());
+        last_entry.set(entry.clone());
+        entry
+    };
+
+    // Any extraction/summarization warning attached to the just-completed
+    // entry (thin content, no article found, a failed HF summary, …) is
+    // otherwise easy to miss sitting quietly in the summary block below, so
+    // surface it as a toast too.
+    let toast_entry_warning = move |entry: Option<HistoryEntry>| {
+        if let Some(warning) = entry.and_then(|e| e.info.and_then(|i| i.warning)) {
+            show_info_toast(toast, ToastKind::Warning, warning);
         }
     };
 
@@ -258,7 +268,7 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
         .await;
 
         match result {
-            Ok(_) => refresh_last_entry().await,
+            Ok(_) => toast_entry_warning(refresh_last_entry().await),
             Err(e) => show_info_toast(toast, ToastKind::Error, e),
         }
 
@@ -279,7 +289,7 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
         .await;
 
         match result {
-            Ok(_) => refresh_last_entry().await,
+            Ok(_) => toast_entry_warning(refresh_last_entry().await),
             Err(e) => show_info_toast(toast, ToastKind::Error, e),
         }
 
@@ -360,20 +370,25 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
                 disabled: *is_running.read(),
                 onclick: move |_| {
                     spawn(async move {
-                        // Known learning paths (YouTube, Spotify, etc.) fetch their own
-                        // metadata directly and never touch Jina or send page content
-                        // anywhere, so they skip the consent prompt below — everything
-                        // else, including pages we've never seen before, still asks.
+                        // The readable text is extracted locally, so the only thing
+                        // that can leave this machine is what the AI summary sends to
+                        // Hugging Face — and the prompt below tracks that send. With
+                        // the summary off, the page's content never goes anywhere and
+                        // there is nothing to warn about. Sites we already recognize
+                        // skip the prompt too: public publishers, plus the
+                        // YouTube/Spotify-style paths that pull their metadata from an
+                        // API and never touch the DOM.
+                        let wants_summary = *use_ai_summary.read();
                         let is_known_site = crate::browser::active_tab()
                             .await
                             .map(|(_, url)| crate::learning::is_known_learning_url(&url))
                             .unwrap_or(false);
 
-                        if *use_ai_summary.read() && !is_known_site {
+                        if wants_summary && !is_known_site {
                             show_confirm_toast(
                                 toast,
                                 ToastKind::Warning,
-                                "AI summary is on — this page's content will be sent to third-party services (Jina AI, to extract the readable text, and Hugging Face, to summarize it).",
+                                "This page's text will be sent to a third-party service (Hugging Face, to summarize it). Extracting the readable text happens locally, in the extension.",
                                 "Yes, send it",
                                 false,
                                 Callback::new(move |_| {
