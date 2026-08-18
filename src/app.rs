@@ -212,15 +212,7 @@ pub fn App() -> Element {
 #[component]
 fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
     let mut url = use_signal(|| String::new());
-    let mut date_override = use_signal(|| {
-        js_sys::Date::new_0()
-            .to_iso_string()
-            .as_string()
-            .unwrap_or_default()
-            .chars()
-            .take(10)
-            .collect::<String>()
-    });
+    let mut date_override = use_signal(|| String::new());
     let mut use_ai_summary = use_signal(|| false);
     let mut has_hf_token = use_signal(|| false);
     let mut last_entry: Signal<Option<HistoryEntry>> = use_signal(|| None);
