@@ -1,6 +1,6 @@
 use super::common::{
-    compute_lix, finish_add_learning, hf_api_token, lix_label, parse_jina_response, summarize_with_bart,
-    transcript_stats,
+    compute_lix, finish_add_learning, hf_api_token, is_known_learning_url, lix_label, parse_jina_response,
+    summarize_with_bart, transcript_stats,
 };
 use crate::{browser, http, storage};
 use chrono::{Local, NaiveDate};
@@ -21,6 +21,15 @@ pub async fn run_focus_page_learning(date_override: &str, use_ai_summary: bool) 
         return Err(
             "Can't read this page — browser and extension pages aren't accessible to the extension.".to_string(),
         );
+    }
+
+    // If the active tab already sits on one of our known learning paths, skip
+    // reading the DOM entirely and hand the URL straight to `run_add_learning`
+    // — each of those paths fetches its own metadata directly and never
+    // touches Jina, so none of the DOM/Jina machinery below applies.
+    if is_known_learning_url(&url) {
+        tracing::debug!("[FocusPage] Known path — routing directly");
+        return super::run_add_learning(&url, date_override, use_ai_summary).await;
     }
 
     tracing::debug!("[FocusPage] Reading DOM of {url}");

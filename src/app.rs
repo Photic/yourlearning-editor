@@ -367,20 +367,31 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
                 r#type: "button",
                 disabled: *is_running.read(),
                 onclick: move |_| {
-                    if *use_ai_summary.read() {
-                        show_confirm_toast(
-                            toast,
-                            ToastKind::Warning,
-                            "AI summary is on — this page's content will be sent to third-party services (Jina AI, to extract the readable text, and Hugging Face, to summarize it).",
-                            "Yes, send it",
-                            false,
-                            Callback::new(move |_| {
-                                spawn(run_focus_page());
-                            }),
-                        );
-                    } else {
-                        spawn(run_focus_page());
-                    }
+                    spawn(async move {
+                        // Known learning paths (YouTube, Spotify, etc.) fetch their own
+                        // metadata directly and never touch Jina or send page content
+                        // anywhere, so they skip the consent prompt below — everything
+                        // else, including pages we've never seen before, still asks.
+                        let is_known_site = crate::browser::active_tab()
+                            .await
+                            .map(|(_, url)| crate::learning::is_known_learning_url(&url))
+                            .unwrap_or(false);
+
+                        if *use_ai_summary.read() && !is_known_site {
+                            show_confirm_toast(
+                                toast,
+                                ToastKind::Warning,
+                                "AI summary is on — this page's content will be sent to third-party services (Jina AI, to extract the readable text, and Hugging Face, to summarize it).",
+                                "Yes, send it",
+                                false,
+                                Callback::new(move |_| {
+                                    spawn(run_focus_page());
+                                }),
+                            );
+                        } else {
+                            spawn(run_focus_page());
+                        }
+                    });
                 },
                 if *is_running.read() {
                     "Running…"

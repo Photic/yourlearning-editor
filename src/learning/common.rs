@@ -1,9 +1,130 @@
+use super::{apple_podcast, article, focus_page, rss_podcast, spotify_podcast, vimeo, youtube};
 use crate::browser::sleep;
 use crate::{browser, http, storage};
 use dioxus_logger::tracing;
 
 pub(crate) const YOURLEARNING_URL: &str = "https://yourlearning.ibm.com/add-learning";
 const PENDING_ADD_LEARNING_KEY: &str = "PENDING_ADD_LEARNING";
+
+// ── URL routing ───────────────────────────────────────────────────────────────
+
+/// Detects which kind of learning a URL represents and dispatches to the
+/// appropriate handler.  This is the single entry point the UI calls for
+/// adding a learning — all URL routing lives here so individual handler
+/// modules stay focused on their own media type.
+pub async fn run_add_learning(url: &str, date_override: &str, use_ai_summary: bool) -> Result<(), String> {
+    let url = url.trim().to_string();
+
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Err(
+            "Please paste a full URL starting with https://\n\nSupported sources:\n  • YouTube       youtube.com/watch or youtu.be\n  • Apple Podcast podcasts.apple.com\n  • Spotify       open.spotify.com/episode\n  • Vimeo         vimeo.com\n  • RSS feed      .xml / .rss or known feed hosts\n  • Article       any other https:// page".to_string()
+        );
+    }
+
+    if is_youtube_url(&url) {
+        tracing::debug!("Youtube Entry");
+        youtube::run_youtube_learning(&url, date_override, use_ai_summary).await
+    } else if url.contains("podcasts.apple.com") {
+        tracing::debug!("Apple Podcast Entry");
+        apple_podcast::run_apple_podcast(&url, date_override, use_ai_summary).await
+    } else if url.contains("open.spotify.com/episode/") {
+        tracing::debug!("Spotify Podcast Entry");
+        spotify_podcast::run_spotify_podcast(&url, date_override, use_ai_summary).await
+    } else if is_rss_feed_url(&url) {
+        tracing::debug!("RSS Podcast Entry");
+        rss_podcast::run_rss_podcast(&url, date_override, use_ai_summary).await
+    } else if is_vimeo_url(&url) {
+        tracing::debug!("Vimeo Entry");
+        vimeo::run_vimeo(&url, date_override, use_ai_summary).await
+    } else {
+        tracing::debug!("Default (Article) Entry");
+        article::run_article(&url, date_override, use_ai_summary).await
+    }
+}
+
+/// Reads the browser's currently active tab and interprets its rendered
+/// text as a learning entry. Unlike `run_add_learning`, there's no URL to
+/// route on — the source is whatever page the user is already looking at.
+pub async fn run_focus_page_learning(date_override: &str, use_ai_summary: bool) -> Result<(), String> {
+    focus_page::run_focus_page_learning(date_override, use_ai_summary).await
+}
+
+/// Returns true for YouTube watch pages (both the standard `youtube.com/watch`
+/// URL and the `youtu.be/` short-link form) — shared between `run_add_learning`
+/// and the focus-page handler, which uses it to route straight to the YouTube
+/// path instead of reading the page DOM.
+pub(crate) fn is_youtube_url(url: &str) -> bool {
+    url.contains("youtube.com/watch") || url.contains("youtu.be/")
+}
+
+/// Returns true if `url` matches one of the learning paths above that fetch
+/// their own metadata directly (YouTube, Apple Podcasts, Spotify, RSS,
+/// Vimeo) rather than needing the page's rendered DOM.
+///
+/// There's no reliable way to detect from a URL alone whether a page sits
+/// behind a login or is otherwise sensitive — a content script can't inspect
+/// auth state or document classification before rendering it. So rather than
+/// try to flag "sensitive" pages, this flips the check around: only pages we
+/// already know how to read *without* touching their DOM or sending them to
+/// a third party get to skip the focus-page consent prompt. Everything else
+/// — including pages we've simply never seen before — still asks.
+pub fn is_known_learning_url(url: &str) -> bool {
+    is_youtube_url(url)
+        || url.contains("podcasts.apple.com")
+        || url.contains("open.spotify.com/episode/")
+        || is_rss_feed_url(url)
+        || is_vimeo_url(url)
+}
+
+/// Returns true if the URL looks like a direct podcast RSS feed rather than a
+/// web page.  Heuristics (in priority order):
+/// - well-known feed hosting domains
+/// - common feed path segments (/feed, /rss, …)
+/// - explicit .xml / .rss file extension
+fn is_rss_feed_url(url: &str) -> bool {
+    let lower = url.to_lowercase();
+
+    // Well-known RSS hosting domains
+    let feed_domains = [
+        "feeds.simplecast.com",
+        "feeds.buzzsprout.com",
+        "feeds.transistor.fm",
+        "feeds.soundcloud.com",
+        "feeds.libsyn.com",
+        "feeds.megaphone.fm",
+        "feeds.acast.com",
+        "feeds.captivate.fm",
+        "feeds.podcastmirror.com",
+        "anchor.fm/s/",
+        "audioboom.com/channels/",
+        "rss.art19.com",
+        "omny.fm/shows/",
+        "pinecast.com/feed/",
+        "podcasts.files.bbci.co.uk",
+    ];
+    if feed_domains.iter().any(|d| lower.contains(d)) {
+        return true;
+    }
+
+    // Path-segment heuristics
+    let feed_segments = ["/feed/", "/feed.xml", "/rss", "/podcast.xml", "/episodes.xml"];
+    if feed_segments.iter().any(|s| lower.contains(s)) {
+        return true;
+    }
+
+    // Explicit .xml / .rss extension (strip query string first)
+    let path = lower.split('?').next().unwrap_or(&lower);
+    path.ends_with(".xml") || path.ends_with(".rss")
+}
+
+/// Returns true for vimeo.com watch pages and player.vimeo.com embed URLs.
+fn is_vimeo_url(url: &str) -> bool {
+    let lower = url.to_lowercase();
+    lower.contains("vimeo.com/")
+        && !lower.contains("vimeo.com/channels")
+        && !lower.contains("vimeo.com/groups")
+        && !lower.contains("vimeo.com/album")
+}
 
 // ── HF Inference API (bart-large-cnn) ────────────────────────────────────────
 
