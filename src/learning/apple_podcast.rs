@@ -9,22 +9,27 @@ use dioxus_logger::tracing;
 /// `https://podcasts.apple.com/…/idNNNNNNNNN` (show or episode page).
 /// Also extracts the episode ID from the `?i=NNNNN` query parameter when present.
 fn parse_apple_url(url: &str) -> Option<(String, Option<String>)> {
+    // Separate the path from the query string first, since the "id…" segment
+    // and the query params are not always separated by a '/' (e.g.
+    // ".../id1500746737?i=1000783964365&l=da").
+    let (path, query) = match url.split_once('?') {
+        Some((p, q)) => (p, Some(q)),
+        None => (url, None),
+    };
+
     // Show/podcast ID: the path segment starting with "id"
-    let podcast_id = url
+    let podcast_id = path
         .split('/')
-        .find(|seg| seg.starts_with("id") && seg[2..].chars().all(|c| c.is_ascii_digit()))?
+        .find(|seg| seg.starts_with("id") && seg.len() > 2 && seg[2..].chars().all(|c| c.is_ascii_digit()))?
         .trim_start_matches("id")
         .to_string();
 
     // Optional episode ID from `?i=...` query parameter
-    let episode_id = url
-        .split('?')
-        .nth(1)
-        .and_then(|qs| {
-            qs.split('&')
-                .find(|p| p.starts_with("i="))
-                .map(|p| p[2..].to_string())
-        });
+    let episode_id = query.and_then(|qs| {
+        qs.split('&')
+            .find(|p| p.starts_with("i="))
+            .map(|p| p[2..].to_string())
+    });
 
     Some((podcast_id, episode_id))
 }
@@ -48,10 +53,128 @@ async fn itunes_lookup(id: &str, entity: &str) -> Option<serde_json::Value> {
     results.first().cloned()
 }
 
+/// Fetches an Apple Podcasts episode page directly and extracts its embedded
+/// `schema.org/PodcastEpisode` JSON-LD block.
+///
+/// This is the authoritative source for episode title/duration/date: unlike
+/// the `i=` episode ID in the URL (which is an Apple-internal catalog ID with
+/// no relationship to the podcast's own RSS feed — it does not appear in the
+/// feed's `<guid>` or item URLs for most shows), the JSON-LD block is present
+/// on the page itself and uses locale-independent ISO 8601 formats, so it
+/// works regardless of the page's display language.
+async fn fetch_episode_jsonld(url: &str) -> Option<(String, u64, String, String)> {
+    let html = http::get(
+        url,
+        &[("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")],
+        15_000,
+    )
+    .await
+    .ok()?;
+
+    let json = extract_podcast_episode_jsonld(&html)?;
+
+    let title = json["name"].as_str()?.to_string();
+    let duration_secs = json["duration"].as_str().map(parse_iso8601_duration).unwrap_or(0);
+    let pub_date = json["datePublished"]
+        .as_str()
+        .and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+        .map(|d| d.format("%Y/%m/%d").to_string())
+        .unwrap_or_default();
+    let description = json["description"].as_str().unwrap_or("").to_string();
+
+    Some((title, duration_secs, pub_date, description))
+}
+
+/// Scans `html` for `<script type="application/ld+json">` blocks and returns
+/// the parsed JSON of the first one whose `@type` is `"PodcastEpisode"`.
+fn extract_podcast_episode_jsonld(html: &str) -> Option<serde_json::Value> {
+    let marker = "application/ld+json";
+    let mut search_from = 0;
+
+    while let Some(rel) = html[search_from..].find(marker) {
+        let marker_abs = search_from + rel;
+        let tag_close = html[marker_abs..].find('>')? + marker_abs + 1;
+        let content_end = html[tag_close..].find("</script>")? + tag_close;
+        let json_text = &html[tag_close..content_end];
+
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(json_text) {
+            if value["@type"].as_str() == Some("PodcastEpisode") {
+                return Some(value);
+            }
+        }
+
+        search_from = content_end + "</script>".len();
+    }
+
+    None
+}
+
+/// Parses a simple ISO 8601 duration of the form `PT#H#M#S` (all components
+/// optional) into whole seconds, e.g. `"PT20M3S"` -> 1203.
+fn parse_iso8601_duration(s: &str) -> u64 {
+    let s = s.strip_prefix("PT").unwrap_or(s);
+    let mut secs = 0u64;
+    let mut num = String::new();
+
+    for c in s.chars() {
+        if c.is_ascii_digit() {
+            num.push(c);
+            continue;
+        }
+        let n: u64 = num.parse().unwrap_or(0);
+        num.clear();
+        match c {
+            'H' => secs += n * 3600,
+            'M' => secs += n * 60,
+            'S' => secs += n,
+            _ => {}
+        }
+    }
+
+    secs
+}
+
+/// Fetches the podcast's RSS feed and returns the full `<description>` (or
+/// `<itunes:summary>`) of the item whose `<title>` matches `title`
+/// (case-insensitive, trimmed). Used to enrich the JSON-LD episode metadata
+/// — which only carries a short, truncated description — with the full show
+/// notes, since matching by title is far more reliable across feeds than
+/// matching by Apple's episode ID (see `fetch_episode_jsonld`).
+async fn find_description_in_feed(feed_url: &str, title: &str) -> Option<String> {
+    let xml = http::get(feed_url, &[("User-Agent", "Mozilla/5.0 (compatible; yourlearning-editor)")], 30_000)
+        .await
+        .ok()?;
+
+    parse_rss_description_by_title(&xml, title)
+}
+
+fn parse_rss_description_by_title(xml: &str, title: &str) -> Option<String> {
+    let target = title.trim().to_lowercase();
+    let lower = xml.to_lowercase();
+    let mut pos = 0;
+
+    while let Some(item_start) = lower[pos..].find("<item>").map(|i| pos + i) {
+        let item_end = lower[item_start..].find("</item>").map(|i| item_start + i + 7)?;
+        let item = &xml[item_start..item_end];
+
+        if extract_xml_text(item, "title").is_some_and(|t| t.trim().to_lowercase() == target) {
+            return extract_xml_text(item, "itunes:summary").or_else(|| extract_xml_text(item, "description"));
+        }
+
+        pos = item_end;
+    }
+
+    None
+}
+
 /// Looks up a specific episode by its episode ID using the podcast's feed URL.
 /// The iTunes Search API does not support direct episode lookup by episode ID
 /// reliably, so we fetch the RSS feed and find the episode by its GUID or by
 /// matching the numeric episode ID embedded in the feed item URL.
+///
+/// This is a fallback for when `fetch_episode_jsonld` is unavailable — in
+/// practice most feeds don't embed Apple's episode ID anywhere, so this
+/// rarely matches, but it's cheap insurance.
 async fn lookup_episode_from_feed(feed_url: &str, episode_id: &str) -> Option<(String, u64, String, String)> {
     // episode_id here is the numeric string from ?i=NNNNN
     let xml = http::get(feed_url, &[("User-Agent", "Mozilla/5.0 (compatible; yourlearning-editor)")], 30_000)
@@ -188,9 +311,17 @@ pub(crate) async fn run_apple_podcast(url: &str, date_override: &str, use_ai_sum
 
     // ── Episode path ─────────────────────────────────────────────────────────
     if let Some(ref ep_id) = episode_id {
-        tracing::debug!("[Apple] Looking up episode {ep_id} from feed {feed_url}");
+        tracing::debug!("[Apple] Looking up episode {ep_id} via page JSON-LD");
 
-        let episode = if !feed_url.is_empty() {
+        let episode = if let Some((ep_title, duration_secs, pub_date_str, short_desc)) = fetch_episode_jsonld(url).await {
+            let full_desc = if !feed_url.is_empty() {
+                find_description_in_feed(&feed_url, &ep_title).await
+            } else {
+                None
+            };
+            Some((ep_title, duration_secs, pub_date_str, full_desc.unwrap_or(short_desc)))
+        } else if !feed_url.is_empty() {
+            tracing::debug!("[Apple] JSON-LD unavailable — falling back to feed ID match");
             lookup_episode_from_feed(&feed_url, ep_id).await
         } else {
             None
