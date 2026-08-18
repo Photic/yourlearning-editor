@@ -1,4 +1,7 @@
-use super::common::{compute_lix, finish_add_learning, hf_api_token, lix_label, summarize_with_bart, transcript_stats};
+use super::common::{
+    compute_lix, finish_add_learning, hf_api_token, lix_label, parse_jina_response, summarize_with_bart,
+    transcript_stats,
+};
 use crate::{http, storage};
 use chrono::{Local, NaiveDate};
 use dioxus_logger::tracing;
@@ -17,45 +20,10 @@ async fn fetch_html(url: &str) -> Result<String, String> {
 ///
 /// Jina Reader renders JS-heavy pages server-side and returns clean
 /// markdown-like text, making it ideal as a fallback for SPAs.
-/// The response starts with `Title: …\nURL Source: …\n\nMarkdown Content:\n`
-/// followed by the article body.
 async fn fetch_via_jina(url: &str) -> Option<(String, String)> {
     let jina_url = format!("https://r.jina.ai/{url}");
     let text = http::get(&jina_url, &[("Accept", "text/plain")], 60_000).await.ok()?;
-
-    // Parse the Jina response header lines.
-    // Format:
-    //   Title: <title>
-    //   URL Source: <url>
-    //   <blank line>
-    //   Markdown Content:
-    //   <body text>
-    let mut title = String::new();
-    let mut body_start = 0usize;
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if let Some(t) = trimmed.strip_prefix("Title:") {
-            title = t.trim().to_string();
-        }
-        if trimmed == "Markdown Content:" {
-            body_start = text.find("Markdown Content:")
-                .map(|i| i + "Markdown Content:".len())
-                .unwrap_or(0);
-            break;
-        }
-    }
-
-    let body = if body_start > 0 {
-        text[body_start..].trim().to_string()
-    } else {
-        text.clone()
-    };
-
-    if body.split_whitespace().count() < 50 {
-        return None;
-    }
-
-    Some((title, body))
+    parse_jina_response(&text)
 }
 
 /// Extracts the text content of the first `<h1>` tag found in `html`.

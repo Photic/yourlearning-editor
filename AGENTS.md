@@ -20,7 +20,12 @@ This file provides context for any AI agent working on this project. **Keep it u
 - **Focus page** — instead of pasting a URL, the "Add Page Learning" button in
   the popup reads the DOM of the browser's currently active tab (only on that
   explicit click — never passively) and interprets its rendered text as the
-  learning entry. Requires the `scripting` extension permission.
+  learning entry. Requires the `scripting` extension permission. When AI
+  summary is on (and an HF token is configured), the page's raw HTML is also
+  sent to Jina Reader (`POST https://r.jina.ai/` with an `html` field) for a
+  proper readability extraction instead of relying on raw `innerText` —
+  gated behind the same consent toast as the Hugging Face summary itself,
+  since it's the same category of third-party send.
 
 ---
 

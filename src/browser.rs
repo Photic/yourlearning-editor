@@ -43,6 +43,7 @@ function __owlsExtractPageDom() {
     return {
         title: document.title || '',
         text: (document.body ? document.body.innerText : '') || '',
+        html: (document.documentElement ? document.documentElement.outerHTML : '') || '',
     };
 }
 export function __owlsPageDomExtractor() { return __owlsExtractPageDom; }
@@ -149,15 +150,25 @@ pub async fn active_tab() -> Result<(i32, String), String> {
     Ok((id, url))
 }
 
-/// Injects a small script into `tab_id` that reads the page's rendered text
-/// — `document.title` and `document.body.innerText` — and returns it.
-/// `innerText` (rather than `textContent`) mirrors what a sighted user sees:
-/// no hidden/`display:none` text, script/style contents, or collapsed
-/// whitespace.
+/// The rendered content of a tab's page, as read directly from its live DOM.
+pub struct PageDom {
+    pub title: String,
+    /// `document.body.innerText` — mirrors what a sighted user sees: no
+    /// hidden/`display:none` text, script/style contents, or collapsed
+    /// whitespace. The cheap, always-available extraction.
+    pub text: String,
+    /// `document.documentElement.outerHTML` — the raw markup, for callers
+    /// that want to run it through a proper readability pass (e.g. Jina
+    /// Reader) instead of settling for `text`.
+    pub html: String,
+}
+
+/// Injects a small script into `tab_id` that reads the page's title, rendered
+/// text, and raw HTML in one shot, and returns them.
 ///
 /// This only runs when explicitly requested (the user clicking "Add Page
 /// Learning" in the popup) — nothing here observes tabs passively.
-pub async fn read_page_dom(tab_id: i32) -> Result<(String, String), String> {
+pub async fn read_page_dom(tab_id: i32) -> Result<PageDom, String> {
     let target = Object::new();
     Reflect::set(&target, &"tabId".into(), &(tab_id as f64).into()).map_err(|e| js_err(&e))?;
 
@@ -184,8 +195,12 @@ pub async fn read_page_dom(tab_id: i32) -> Result<(String, String), String> {
         .ok()
         .and_then(|v| v.as_string())
         .unwrap_or_default();
+    let html = Reflect::get(&payload, &"html".into())
+        .ok()
+        .and_then(|v| v.as_string())
+        .unwrap_or_default();
 
-    Ok((title, text))
+    Ok(PageDom { title, text, html })
 }
 
 fn js_err(value: &JsValue) -> String {

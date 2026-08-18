@@ -1,5 +1,8 @@
-use super::common::{compute_lix, finish_add_learning, hf_api_token, lix_label, summarize_with_bart, transcript_stats};
-use crate::{browser, storage};
+use super::common::{
+    compute_lix, finish_add_learning, hf_api_token, lix_label, parse_jina_response, summarize_with_bart,
+    transcript_stats,
+};
+use crate::{browser, http, storage};
 use chrono::{Local, NaiveDate};
 use dioxus_logger::tracing;
 
@@ -21,10 +24,40 @@ pub async fn run_focus_page_learning(date_override: &str, use_ai_summary: bool) 
     }
 
     tracing::debug!("[FocusPage] Reading DOM of {url}");
-    let (dom_title, dom_text) = browser::read_page_dom(tab_id).await?;
+    let page = browser::read_page_dom(tab_id).await?;
 
-    let title = if dom_title.trim().is_empty() { url.clone() } else { dom_title.trim().to_string() };
-    let body_text = dom_text.trim().to_string();
+    // Gates both third-party sends below identically — Jina extraction only
+    // runs when a summary is actually about to be generated, not just
+    // because the checkbox is on with no token configured. That keeps this
+    // matching what the popup's consent toast told the user would happen
+    // ("sent to Jina AI ... and Hugging Face").
+    let has_hf_token = hf_api_token().await.is_some();
+
+    // `use_ai_summary` is the same consent the popup already warns about
+    // before calling this — reused here rather than a second prompt, since
+    // sending the HTML to Jina Reader for a proper readability pass is the
+    // same category of send. Jina strips nav/ads/boilerplate that
+    // `innerText` alone can't tell apart from the actual content; if consent
+    // wasn't given, or the request fails, `page.text` is still there to fall
+    // back to.
+    let (title_source, body_source) = if use_ai_summary && has_hf_token {
+        match fetch_via_jina_html(&page.html, &url).await {
+            Some((jina_title, jina_body)) => {
+                tracing::debug!("[FocusPage] Jina Reader: {} words", jina_body.split_whitespace().count());
+                let title = if jina_title.is_empty() { page.title.clone() } else { jina_title };
+                (title, jina_body)
+            }
+            None => {
+                tracing::debug!("[FocusPage] Jina Reader unavailable/thin — using raw DOM text");
+                (page.title.clone(), page.text.clone())
+            }
+        }
+    } else {
+        (page.title.clone(), page.text.clone())
+    };
+
+    let title = if title_source.trim().is_empty() { url.clone() } else { title_source.trim().to_string() };
+    let body_text = body_source.trim().to_string();
 
     if body_text.is_empty() {
         return Err("Could not find any readable text on this page.".to_string());
@@ -57,7 +90,7 @@ pub async fn run_focus_page_learning(date_override: &str, use_ai_summary: bool) 
     // it ever invokes this with `use_ai_summary: true` — this is just the
     // send.
     let mut hf_warning: Option<String> = None;
-    let description = if use_ai_summary && hf_api_token().await.is_some() {
+    let description = if use_ai_summary && has_hf_token {
         let summary_result = summarize_with_bart(&body_text).await;
         tracing::debug!("[FocusPage] Summary: {summary_result:?}");
         match summary_result {
@@ -88,6 +121,20 @@ pub async fn run_focus_page_learning(date_override: &str, use_ai_summary: bool) 
     };
 
     finish_add_learning(&url, &title, hours, minutes, &today, &description, analytics).await
+}
+
+/// Sends `html` (already read from the live DOM) to Jina Reader for
+/// extraction, rather than a URL for Jina to fetch itself — the counterpart
+/// to `article.rs`'s `fetch_via_jina`, needed here because the page may be
+/// behind auth/private and Jina's own fetch wouldn't see what the browser
+/// already rendered. Returns `None` on any error.
+async fn fetch_via_jina_html(html: &str, url: &str) -> Option<(String, String)> {
+    if html.trim().is_empty() {
+        return None;
+    }
+    let body = serde_json::json!({ "html": html, "url": url });
+    let text = http::post_json("https://r.jina.ai/", &[("Accept", "text/plain")], &body, 60_000).await.ok()?;
+    parse_jina_response(&text)
 }
 
 /// True for browser/extension-internal pages that `chrome.scripting` can

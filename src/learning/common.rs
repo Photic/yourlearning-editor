@@ -184,6 +184,50 @@ pub(crate) fn split_duration(secs: u64) -> (u64, u64) {
     (secs / 3600, (secs % 3600) / 60)
 }
 
+// ── Jina Reader ───────────────────────────────────────────────────────────────
+
+/// Parses a Jina Reader response into (title, body) — shared by every caller
+/// of `https://r.jina.ai/`, whichever mode they used to get there (fetching a
+/// URL themselves, or POSTing raw HTML for Jina to parse).
+///
+/// Response format:
+///   Title: <title>
+///   URL Source: <url>
+///   <blank line>
+///   Markdown Content:
+///   <body text>
+///
+/// Returns `None` if the body looks too thin to be a real extraction (Jina
+/// choked on the input, or the page genuinely had nothing worth reading).
+pub(crate) fn parse_jina_response(text: &str) -> Option<(String, String)> {
+    let mut title = String::new();
+    let mut body_start = 0usize;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(t) = trimmed.strip_prefix("Title:") {
+            title = t.trim().to_string();
+        }
+        if trimmed == "Markdown Content:" {
+            body_start = text.find("Markdown Content:")
+                .map(|i| i + "Markdown Content:".len())
+                .unwrap_or(0);
+            break;
+        }
+    }
+
+    let body = if body_start > 0 {
+        text[body_start..].trim().to_string()
+    } else {
+        text.to_string()
+    };
+
+    if body.split_whitespace().count() < 50 {
+        return None;
+    }
+
+    Some((title, body))
+}
+
 /// Builds the analytics block for a plain "Description" body of text — the
 /// shape shared by all the podcast handlers (Apple, Spotify, RSS, Vimeo).
 /// Returns `None` for empty text; YouTube and articles build their own

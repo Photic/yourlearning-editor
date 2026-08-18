@@ -22,7 +22,28 @@ enum Tab {
 // until they click Confirm or Cancel; a plain info toast (no `action`) has
 // nothing to wait on, so it clears itself after `INFO_TOAST_MS`.
 
-const INFO_TOAST_MS: i32 = 6_000;
+const INFO_TOAST_MS: i32 = 8_000;
+
+/// Visual/semantic severity, independent of whether the toast waits for a
+/// decision (`action`) or auto-dismisses. `Message` is just the app's normal
+/// colors; `Warning` and `Error` get a colored accent so they read as
+/// distinct from routine confirmations and status updates at a glance.
+#[derive(Clone, Copy, PartialEq)]
+enum ToastKind {
+    Message,
+    Warning,
+    Error,
+}
+
+impl ToastKind {
+    fn css_class(self) -> &'static str {
+        match self {
+            ToastKind::Message => "toast",
+            ToastKind::Warning => "toast toast--warning",
+            ToastKind::Error => "toast toast--error",
+        }
+    }
+}
 
 #[derive(Clone, PartialEq)]
 struct ToastAction {
@@ -37,6 +58,7 @@ struct Toast {
     /// delayed auto-dismiss doesn't clear a *later* toast that's since taken
     /// its place.
     id: f64,
+    kind: ToastKind,
     message: String,
     action: Option<ToastAction>,
 }
@@ -46,6 +68,7 @@ struct Toast {
 /// content to a third-party AI, deleting history, …).
 fn show_confirm_toast(
     mut toast: Signal<Option<Toast>>,
+    kind: ToastKind,
     message: impl Into<String>,
     action_label: impl Into<String>,
     is_danger: bool,
@@ -53,6 +76,7 @@ fn show_confirm_toast(
 ) {
     toast.set(Some(Toast {
         id: js_sys::Date::now(),
+        kind,
         message: message.into(),
         action: Some(ToastAction {
             label: action_label.into(),
@@ -64,10 +88,11 @@ fn show_confirm_toast(
 
 /// Raises a plain informational toast that clears itself after
 /// `INFO_TOAST_MS` — for messages that don't need a decision.
-fn show_info_toast(mut toast: Signal<Option<Toast>>, message: impl Into<String>) {
+fn show_info_toast(mut toast: Signal<Option<Toast>>, kind: ToastKind, message: impl Into<String>) {
     let id = js_sys::Date::now();
     toast.set(Some(Toast {
         id,
+        kind,
         message: message.into(),
         action: None,
     }));
@@ -91,7 +116,7 @@ fn ToastHost() -> Element {
             // action-less — remounts this node instead of patching it, which
             // is what makes the progress-bar animation below restart cleanly
             // rather than continuing mid-way through from the previous toast.
-            div { key: "{t.id}", class: "toast",
+            div { key: "{t.id}", class: t.kind.css_class(),
                 span { class: "toast-message", "{t.message}" }
                 if let Some(action) = t.action.clone() {
                     div { class: "toast-actions",
@@ -198,7 +223,6 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
     });
     let mut use_ai_summary = use_signal(|| false);
     let mut has_hf_token = use_signal(|| false);
-    let mut error = use_signal(|| String::new());
     let mut last_entry: Signal<Option<HistoryEntry>> = use_signal(|| None);
     let mut is_running = use_signal(|| false);
     let toast: Signal<Option<Toast>> = use_context();
@@ -233,7 +257,6 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
         }
 
         is_running.set(true);
-        error.set(String::new());
 
         let result = crate::browser::run_add_learning_in_background(
             &url_val,
@@ -244,7 +267,7 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
 
         match result {
             Ok(_) => refresh_last_entry().await,
-            Err(e) => error.set(e),
+            Err(e) => show_info_toast(toast, ToastKind::Error, e),
         }
 
         is_running.set(false);
@@ -256,7 +279,6 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
     // confirmation's "Send" action) since it only closes over `Copy` signals.
     let run_focus_page = move || async move {
         is_running.set(true);
-        error.set(String::new());
 
         let result = crate::browser::run_focus_page_learning_in_background(
             date_override.read().trim(),
@@ -266,7 +288,7 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
 
         match result {
             Ok(_) => refresh_last_entry().await,
-            Err(e) => show_info_toast(toast, e),
+            Err(e) => show_info_toast(toast, ToastKind::Error, e),
         }
 
         is_running.set(false);
@@ -287,7 +309,6 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
                     oninput: move |event| {
                         url.set(event.value());
                         date_override.set(String::new());
-                        error.set(String::new());
                     },
                     disabled: *is_running.read(),
                 }
@@ -346,11 +367,11 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
                 r#type: "button",
                 disabled: *is_running.read(),
                 onclick: move |_| {
-                    error.set(String::new());
                     if *use_ai_summary.read() {
                         show_confirm_toast(
                             toast,
-                            "AI summary is on — this page's text will be sent to a third-party AI service (Hugging Face) to generate a summary.",
+                            ToastKind::Warning,
+                            "AI summary is on — this page's content will be sent to third-party services (Jina AI, to extract the readable text, and Hugging Face, to summarize it).",
                             "Yes, send it",
                             false,
                             Callback::new(move |_| {
@@ -368,10 +389,6 @@ fn AddLearningTab(active_tab: Signal<Tab>) -> Element {
                 }
             }
             span { class: "focus-page-hint", "Reads current page." }
-        }
-
-        if !error.read().is_empty() {
-            pre { class: "output", "{error}" }
         }
 
         if let Some(entry) = last_entry.read().as_ref() {
@@ -444,8 +461,8 @@ fn LearningSummary(entry: HistoryEntry) -> Element {
 
 fn HfTokenTab() -> Element {
     let mut token = use_signal(String::new);
-    let mut status = use_signal(String::new);
     let mut is_saving = use_signal(|| false);
+    let toast: Signal<Option<Toast>> = use_context();
 
     use_resource(move || async move {
         let value = storage::get_setting("HF_API_TOKEN").await.ok().flatten();
@@ -455,13 +472,12 @@ fn HfTokenTab() -> Element {
     let save_token = move |event: FormEvent| async move {
         event.prevent_default();
         is_saving.set(true);
-        status.set(String::new());
 
         let result = storage::set_setting("HF_API_TOKEN", token.read().trim()).await;
 
         match result {
-            Err(e) => status.set(format!("Error: {e}")),
-            _ => status.set("✓ HF token saved locally.".to_string()),
+            Err(e) => show_info_toast(toast, ToastKind::Error, format!("Could not save HF token: {e}")),
+            _ => show_info_toast(toast, ToastKind::Message, "✓ HF token saved locally."),
         }
 
         is_saving.set(false);
@@ -493,10 +509,6 @@ fn HfTokenTab() -> Element {
                 }
             }
         }
-
-        if !status.read().is_empty() {
-            p { class: "status-msg", "{status}" }
-        }
     }
 }
 
@@ -504,13 +516,19 @@ fn HfTokenTab() -> Element {
 
 fn HistoryTab() -> Element {
     let mut entries: Signal<Vec<HistoryEntry>> = use_signal(Vec::new);
-    let mut error = use_signal(|| String::new());
+    // Only gates the empty-state message below (so a load failure doesn't
+    // read as "you have zero entries") — the failure text itself goes to a
+    // toast now, not an inline banner.
+    let mut load_failed = use_signal(|| false);
     let toast: Signal<Option<Toast>> = use_context();
 
     use_resource(move || async move {
         match storage::get_all_history().await {
             Ok(list) => entries.set(list),
-            Err(e) => error.set(format!("Could not load history: {e}")),
+            Err(e) => {
+                load_failed.set(true);
+                show_info_toast(toast, ToastKind::Error, format!("Could not load history: {e}"));
+            }
         }
     });
 
@@ -524,15 +542,19 @@ fn HistoryTab() -> Element {
                     onclick: move |_| {
                         show_confirm_toast(
                             toast,
+                            ToastKind::Warning,
                             "Clear all history? This can't be undone.",
                             "Yes, clear it",
                             true,
                             Callback::new(move |_| {
                                 spawn(async move {
-                                    error.set(String::new());
                                     match storage::clear_history().await {
                                         Ok(()) => entries.set(Vec::new()),
-                                        Err(e) => error.set(format!("Could not clear history: {e}")),
+                                        Err(e) => show_info_toast(
+                                            toast,
+                                            ToastKind::Error,
+                                            format!("Could not clear history: {e}"),
+                                        ),
                                     }
                                 });
                             }),
@@ -543,11 +565,7 @@ fn HistoryTab() -> Element {
             }
         }
 
-        if !error.read().is_empty() {
-            p { class: "status-msg", "{error}" }
-        }
-
-        if entries.read().is_empty() && error.read().is_empty() {
+        if entries.read().is_empty() && !*load_failed.read() {
             p { class: "history-empty",
                 "No learnings recorded yet — add one from the Add Learning tab."
             }

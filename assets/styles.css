@@ -242,13 +242,6 @@ button {
   border-color: #2d5bbf;
 }
 
-.status-msg {
-  margin-top: 1rem;
-  color: #396cd8;
-  font-size: 0.9em;
-}
-
-.output,
 .summary {
   margin-top: 1.5rem;
   width: 100%;
@@ -261,14 +254,6 @@ button {
   line-height: 1.6;
   box-shadow: 0 2px 2px rgba(0, 0, 0, 0.1);
   box-sizing: border-box;
-}
-
-.output {
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.summary {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
@@ -383,6 +368,25 @@ button {
   overflow: hidden;
 }
 
+/* Message-kind toasts use the app's normal colors (no override needed).
+   Warning/error toasts get a colored left edge plus matching message text,
+   so severity reads at a glance without touching the toast's own bg/border. */
+.toast--warning {
+  border-left: 4px solid #d9a02c;
+}
+
+.toast--warning .toast-message {
+  color: #d9a02c;
+}
+
+.toast--error {
+  border-left: 4px solid #d83939;
+}
+
+.toast--error .toast-message {
+  color: #d83939;
+}
+
 /* Flush against the toast's own edges (not inset by its padding) so it
    reads as a native countdown indicator. `animation-duration` is set inline
    from `INFO_TOAST_MS` so the bar and the actual auto-dismiss timer can
@@ -398,6 +402,14 @@ button {
   animation-name: toast-progress-shrink;
   animation-timing-function: linear;
   animation-fill-mode: forwards;
+}
+
+.toast--warning .toast-progress {
+  background: #d9a02c;
+}
+
+.toast--error .toast-progress {
+  background: #d83939;
 }
 
 @keyframes toast-progress-shrink {
@@ -522,7 +534,6 @@ button {
   }
 
   .toast,
-  .output,
   .summary {
     background: #1a1a1a;
     border-color: #444;
