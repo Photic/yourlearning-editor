@@ -24,6 +24,13 @@
       "matches": ["https://yourlearning.ibm.com/add-learning*"],
       "js": ["content.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "exclude_matches": ["https://yourlearning.ibm.com/add-learning*"],
+      "js": ["panel.js"],
+      "run_at": "document_idle",
+      "all_frames": false
     }
   ],
   "host_permissions": [

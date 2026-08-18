@@ -26,6 +26,11 @@ This file provides context for any AI agent working on this project. **Keep it u
   the popup captures the DOM of the browser's currently active tab (only on
   that explicit click — never passively). Requires the `scripting` extension
   permission.
+- **In-page panel** — the same capture, reachable without opening the popup.
+  `extension/panel.js` runs on every page and draws a thin rail against the
+  right edge of the viewport; hovering it slides out a card with one button.
+  Both entry points send the identical `add_focus_page_learning` message and
+  are subject to the identical consent rules — see **In-page panel** below.
 
 **Page content is parsed locally and never leaves the browser.** Captured HTML
 goes through `extract_article` in `learning/common.rs`, a readability pass
@@ -120,6 +125,42 @@ any tab can raise one) replaces one-off inline confirm banners. A toast with
 an action (e.g. "Yes, send it" / "Cancel") stays up until the user picks one;
 a plain info toast (no action) auto-dismisses after ~2.5s. Used today for the
 AI-consent prompt on "Add Page Learning" and the Clear History confirmation.
+
+---
+
+## In-page panel
+
+`extension/panel.js` is a content script matched on `<all_urls>` (excluding the
+YourLearning add-learning page, where `content.js` already runs and where
+capturing the form itself would be meaningless). It renders a 4px rail against
+the right edge of the viewport that expands into a card on hover.
+
+- **Isolation** — the UI lives in a `mode: "closed"` shadow root under an
+  `<owls-panel>` host, so the host page's CSS can't reach it and page scripts
+  can't reach in. Styles are applied via a constructed `CSSStyleSheet`
+  (`adoptedStyleSheets`) rather than a `<style>` element, because a page with a
+  strict `style-src` CSP can block markup-parsed styles a content script
+  injects. The few properties that decide *where* the host sits are set
+  `!important` inline, since a page-wide `* { }` rule could otherwise move it.
+- **Hit area** — the rail is 4px wide but the dock carries a transparent 32px
+  apron on its left, so it looks like a sliver and behaves like a button.
+- **It reads nothing.** The panel only draws itself and sends a message; the
+  DOM capture still happens in the background worker via
+  `chrome.scripting.executeScript`, and still only after an explicit click.
+- **Consent parity** — the popup decides whether to prompt by calling
+  `is_known_learning_url` directly; a content script can't. So the panel asks
+  the worker (`focus_page_consent_check` → `focus_page_needs_consent` in
+  `src/bin/background.rs`) and renders its own inline confirm from the answer.
+  Keeping that list in Rust means the two entry points can't drift into
+  disagreeing about which sites skip the prompt.
+- **Settings** — the panel reads `USE_AI_SUMMARY` from `chrome.storage.local`,
+  the same key the popup's checkbox writes; unset means off. It sends an empty
+  `dateOverride` (i.e. today), since the date field is transient popup state
+  and the rail has nowhere to put a date picker.
+
+Adding this cost no new install-time permission warnings: the manifest already
+declared `host_permissions: ["<all_urls>"]` for the fetch paths, which is the
+warning users see.
 
 ---
 

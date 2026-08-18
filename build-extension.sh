@@ -2,8 +2,9 @@
 set -euo pipefail
 
 # Builds the Dioxus popup and the background service worker, and assembles
-# them with the extension package (manifest.json, background.js, content.js)
-# into dist/public, ready to be loaded unpacked via chrome://extensions.
+# them with the extension package (manifest.json, background.js, content.js,
+# panel.js) into dist/public, ready to be loaded unpacked via
+# chrome://extensions.
 
 dx bundle --release
 
@@ -41,7 +42,7 @@ fi
 cp "$BG_WASM" dist/public/background_bg.wasm
 sed "s#/\\./assets/$(basename "$BG_WASM")#./background_bg.wasm#" "$BG_JS" > dist/public/background_wasm.js
 
-cp extension/manifest.json extension/background.js extension/content.js dist/public/
+cp extension/manifest.json extension/background.js extension/content.js extension/panel.js dist/public/
 cp extension/icon16.png extension/icon32.png extension/icon48.png extension/icon128.png dist/public/
 
 echo ""
