@@ -422,9 +422,6 @@ const MIN_ARTICLE_WORDS: usize = 50;
 pub(crate) struct ArticleDoc {
     pub title: String,
     pub body: String,
-    /// The article's own publication date as `YYYY/MM/DD`, when the page
-    /// carried a usable timestamp in its metadata.
-    pub published: Option<String>,
 }
 
 /// Extracts the readable article out of `html` with a local readability pass
@@ -448,33 +445,7 @@ pub(crate) fn extract_article(html: &str, url: &str) -> Result<ArticleDoc, Strin
         return Err(format!("The page yielded only {words} words of readable text."));
     }
 
-    Ok(ArticleDoc {
-        title: article.title.trim().to_string(),
-        body,
-        published: article.published_time.as_deref().and_then(normalize_date),
-    })
-}
-
-/// Normalises a timestamp to the `YYYY/MM/DD` form the YourLearning form
-/// expects. Handles both shapes pages actually publish: ISO-8601 and anything
-/// prefixed by it (`2024-08-30`, `2024-08-30T00:00:00Z`), and RFC 2822
-/// (`Fri, 07 Aug 2026 14:10:46 GMT`), which HTTP headers and a good many CMSs
-/// emit. Returns `None` for anything that isn't a real date, so a junk value
-/// falls through to the caller's own default rather than being filled in
-/// verbatim.
-fn normalize_date(raw: &str) -> Option<String> {
-    let raw = raw.trim();
-
-    if let Some(date) = raw
-        .get(..10)
-        .and_then(|candidate| chrono::NaiveDate::parse_from_str(candidate, "%Y-%m-%d").ok())
-    {
-        return Some(date.format("%Y/%m/%d").to_string());
-    }
-
-    chrono::DateTime::parse_from_rfc2822(raw)
-        .ok()
-        .map(|dt| dt.format("%Y/%m/%d").to_string())
+    Ok(ArticleDoc { title: article.title.trim().to_string(), body })
 }
 
 /// Builds the analytics block for a plain "Description" body of text — the

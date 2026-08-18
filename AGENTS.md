@@ -16,40 +16,54 @@ This file provides context for any AI agent working on this project. **Keep it u
 - Spotify Episodes (`open.spotify.com/episode/`)
 - Vimeo (`vimeo.com/`)
 - RSS/podcast feeds (well-known feed hosts, `/feed`, `.rss`, `.xml`)
-- Articles (any other `https://` URL) — fetched via Jina Reader
-  (`GET https://r.jina.ai/<url>`), which server-side renders JS-heavy pages.
-  If Jina's own crawler can't reach the page (some sites answer it with a bot
-  check it can't clear), the URL is loaded in an inactive background tab and
-  that tab's rendered HTML is POSTed to Jina instead.
+- Articles (any other `https://` URL) — the markup is fetched directly and the
+  article read out of it locally. A plain fetch can't run a page's JS, so when
+  it yields no article (an SPA shell, a bot check, an empty page), the URL is
+  loaded in an inactive background tab and read from that tab's rendered DOM
+  instead — a real tab runs the scripts and clears the checks a bare request
+  cannot.
 - **Focus page** — instead of pasting a URL, the "Add Page Learning" button in
   the popup captures the DOM of the browser's currently active tab (only on
   that explicit click — never passively). Requires the `scripting` extension
   permission.
 
-**Page content is always interpreted by Jina, never parsed here.** Captured
-HTML goes to `POST https://r.jina.ai/` as `{"html": …, "url": …}` (the `url`
-lets Reader resolve relative links); the response's `Title:`,
-`Published Time:`, and `Markdown Content:` fields are what the app uses. Site
-structure varies too much to parse locally, and raw `innerText` can't
-separate nav/ads/boilerplate from the article. A response with no
-`Markdown Content:` marker is rejected rather than used — that's what a
-Cloudflare "Just a moment…" interstitial looks like.
+**Page content is parsed locally and never leaves the browser.** Captured HTML
+goes through `extract_article` in `learning/common.rs`, a readability pass
+(`dom_smoothie`, a Rust port of the algorithm behind Firefox's Reader View)
+that scores the document and returns the article's title and text. Site
+structure varies too much to hand-parse, and raw `innerText` can't separate
+nav/ads/boilerplate from the article — but a body under
+`MIN_ARTICLE_WORDS` is rejected rather than used, since that's what a
+bot-check interstitial or a consent wall looks like. When readability fails on
+a DOM already in hand, `innerText` is the last resort and the entry carries a
+warning saying so.
 
-Only YouTube/Apple/Spotify/RSS/Vimeo URLs bypass the capture entirely (their
-handlers pull structured metadata from dedicated APIs and feeds, sending
-nothing to Jina). Article publishers on the known-domains list skip the
-*consent prompt* but are still captured and sent — a rendered tab has already
-cleared any bot check, which a server-side fetch of the same URL cannot be
-relied on to do.
+Only YouTube/Apple/Spotify/RSS/Vimeo URLs bypass the capture entirely — their
+handlers pull structured metadata from dedicated APIs and feeds. Article
+publishers on the known-domains list skip the *consent prompt* but are still
+captured, since a rendered tab has already cleared any bot check that a
+server-side fetch of the same URL cannot be relied on to do.
 
-**Consent** — since reading a page always sends its content to Jina, the
-confirmation toast fires for any site not on the known list, regardless of the
-AI-summary toggle; the toggle only changes whether Hugging Face is named in
-the message too.
+**The one exception is Spotify.** `spotify_podcast.rs` still calls Jina Reader
+(`GET https://r.jina.ai/<episode-url>`) to recover the episode description,
+because there is no local source for it: the episode page ships zero JSON-LD,
+no `og:description`, and nothing a readability pass can grab — it renders
+entirely in JS. The embed page's `__NEXT_DATA__` covers title, show, duration
+and release date; only the description needs the round trip. Note this shares
+`r.jina.ai`'s anonymous per-IP rate limit, so it can fail the same way the
+article path used to.
 
-**Entry date** — a date typed by the user wins; otherwise the article's own
-publication date (Jina's `Published Time:`) is used; today's date is the
-fallback only when the page reports no date.
+**Consent** — article extraction is local, so the only page content that can
+leave the machine is what the AI summary sends to Hugging Face. The
+confirmation toast fires only when the summary is on *and* the site isn't on
+the known list; with the summary off, nothing is sent and nothing is asked.
+(Spotify's fallback sends the episode *URL* to Jina, never captured page
+content, and Spotify is on the known list.)
+
+**Entry date** — a date typed by the user wins; otherwise today's. Pages report
+their own dates too inconsistently to use: publishers split between displaying
+the publication date and the last-modified one, so either choice contradicts
+the date on screen often enough to be worse than no guess at all.
 
 ---
 

@@ -38,7 +38,7 @@ fn article_from_rendered_text(page: &browser::PageDom, url: &str, reason: &str) 
 
     let title = if page.title.trim().is_empty() { url.to_string() } else { page.title.trim().to_string() };
     Ok((
-        ArticleDoc { title, body, published: None },
+        ArticleDoc { title, body },
         format!("{reason} Used the page's visible text instead, so the word count includes navigation and footers."),
     ))
 }
@@ -91,7 +91,7 @@ pub(crate) async fn run_article(url: &str, date_override: &str, use_ai_summary: 
     };
 
     let title = if doc.title.trim().is_empty() { url.to_string() } else { doc.title.trim().to_string() };
-    finish_learning_entry(url, "Article", &title, &doc.body, doc.published, date_override, use_ai_summary, warning)
+    finish_learning_entry(url, "Article", &title, &doc.body, date_override, use_ai_summary, warning)
         .await
 }
 
@@ -144,7 +144,7 @@ pub(crate) async fn run_focus_page(date_override: &str, use_ai_summary: bool) ->
     let title = if doc.title.trim().is_empty() { url.clone() } else { doc.title.trim().to_string() };
     tracing::debug!("[FocusPage] Extracted {} words", doc.body.split_whitespace().count());
 
-    finish_learning_entry(&url, "Page", &title, &doc.body, doc.published, date_override, use_ai_summary, warning).await
+    finish_learning_entry(&url, "Page", &title, &doc.body, date_override, use_ai_summary, warning).await
 }
 
 /// Shared tail end of both handlers above: computes LIX/reading time,
@@ -153,15 +153,11 @@ pub(crate) async fn run_focus_page(date_override: &str, use_ai_summary: bool) ->
 /// readability step ran upstream (a page that yielded no article, thin
 /// content, etc.) so it can be surfaced next to any summarisation warning
 /// instead of being silently dropped.
-///
-/// `published` is the article's own publication date as Jina reported it,
-/// used when the user didn't set a date themselves.
 async fn finish_learning_entry(
     url: &str,
     primary_label: &str,
     title: &str,
     body_text: &str,
-    published: Option<String>,
     date_override: &str,
     use_ai_summary: bool,
     extraction_warning: Option<String>,
@@ -218,16 +214,16 @@ async fn finish_learning_entry(
     });
 
     // ── Date ─────────────────────────────────────────────────────────────────
-    // A date the user typed always wins; otherwise use the article's own
-    // publication date, falling back to today only when the page didn't
-    // report one.
+    // Today, unless the user typed a date themselves. Pages report their own
+    // dates too inconsistently to use: publishers split between showing the
+    // publication date and the last-modified one, so whichever we picked
+    // contradicted the date on screen often enough to be worse than no guess
+    // at all. Today is also the honest answer for a field that records when
+    // the learning happened, and the date box handles the rest.
     let today = if !date_override.trim().is_empty() {
         NaiveDate::parse_from_str(date_override.trim(), "%Y-%m-%d")
             .map(|d| d.format("%Y/%m/%d").to_string())
             .unwrap_or_else(|_| date_override.trim().to_string())
-    } else if let Some(published) = published {
-        tracing::debug!("[{primary_label}] Using published date {published}");
-        published
     } else {
         Local::now().format("%Y/%m/%d").to_string()
     };
