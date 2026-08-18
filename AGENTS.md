@@ -8,7 +8,17 @@ This file provides context for any AI agent working on this project. **Keep it u
 
 ## What is OWLS?
 
-**OWLS** (Organising Web Links & Summaries) is a desktop app for logging personal learning entries. The user pastes a URL and the app fetches metadata, optionally generates an AI summary, and saves the entry to a local SQLite database.
+**OWLS** (Organising Web Links & Summaries) is a Chrome extension (Manifest V3)
+for logging personal learning entries. The user supplies a URL — by pasting one
+into the popup, or by capturing the page they're already on — and the extension
+fetches the metadata, optionally generates an AI summary, records the entry in
+its own history, then opens IBM's YourLearning "add learning" form with every
+field prefilled. Submitting that form is left to the user; the extension fills
+it in and stops there.
+
+Both halves are Rust compiled to WASM: the popup UI and the background service
+worker are two binary targets of one crate. There is no server, no database,
+and no native host — history and settings live in `chrome.storage.local`.
 
 **Supported content sources:**
 - YouTube (`youtube.com/watch`, `youtu.be/`)
@@ -76,48 +86,81 @@ the date on screen often enough to be worse than no guess at all.
 
 | Layer | Technology |
 |---|---|
-| Frontend | Rust + [Dioxus](https://dioxuslabs.com/) 0.7 (compiled to WASM) |
-| Backend | Rust + [Tauri](https://tauri.app/) 2 |
-| Persistence | SQLite via `rusqlite` + `r2d2` connection pool |
-| HTTP | `reqwest` with rustls |
+| Packaging | Chrome extension, Manifest V3 |
+| Popup UI | Rust + [Dioxus](https://dioxuslabs.com/) 0.7, compiled to WASM (`src/main.rs`) |
+| Background worker | Rust compiled to WASM (`src/bin/background.rs`), loaded by `extension/background.js` |
+| Browser APIs | `wasm-bindgen` bindings to `chrome.*` — no JS wrapper library |
+| HTTP | JS `fetch()` via `wasm-bindgen` (`src/http.rs`) |
+| Persistence | `chrome.storage.local` — settings and entry history |
+| Readability | [`dom_smoothie`](https://crates.io/crates/dom_smoothie) 0.18 |
 | AI summaries | Hugging Face Inference API (requires HF token) |
+
+The pipeline runs in the **background worker**, not the popup: Chrome tears a
+popup's JS down the instant it loses focus, while the service worker survives
+as long as there's pending work. The popup is a thin UI that hands requests off
+via `chrome.runtime.sendMessage` and awaits the result.
 
 ---
 
 ## Project Layout
 
 ```
-src/            # Dioxus frontend (WASM)
-  main.rs       # Launches the Dioxus app
-  app.rs        # All UI components and tab logic
+src/                    # One crate (`owls-ui`), two WASM binary targets
+  main.rs               # Popup entry point — launches the Dioxus app
+  app.rs                # Every UI component, tab, and the toast system
+  lib.rs                # Module declarations, shared by both targets
+  bin/background.rs     # Worker entry point — the #[wasm_bindgen] exports
+  browser.rs            # chrome.tabs / chrome.scripting / chrome.runtime bindings
+  storage.rs            # chrome.storage.local — settings + history
+  http.rs               # JS fetch() bindings: GET / POST-JSON with timeout
+  learning/
+    mod.rs              # Re-exports the crate's three public entry points
+    common.rs           # URL routing, readability, LIX, HF summary, submission
+    article.rs          # Article + focus-page handlers
+    youtube.rs
+    apple_podcast.rs
+    spotify_podcast.rs
+    rss_podcast.rs
+    vimeo.rs
 assets/
-  styles.css    # All styles (single stylesheet)
-src-tauri/
-  src/
-    lib.rs                          # Tauri setup, command registration
-    control/sqlite.rs               # SQLite connection pool state
-    controllers/learning_entry.rs   # URL routing → correct handler
-    controllers/youtube_learning.rs
-    controllers/apple_podcast_learning.rs
-    controllers/spotify_podcast_learning.rs
-    controllers/rss_podcast_learning.rs
-    controllers/vimeo_learning.rs
-    controllers/article_learning.rs
-    controllers/token.rs            # HF token + settings persistence
-    controllers/extension.rs        # Browser extension export
-  assets/extension/                 # Bundled browser extension source
+  styles.css            # All popup styles (single stylesheet)
+extension/              # Static extension files, copied into the bundle as-is
+  manifest.json         # MV3 manifest
+  background.js         # Service worker: inits the wasm, routes messages
+  content.js            # Autofills the YourLearning form
+  panel.js              # The in-page rail (see below)
+  icon{16,32,48,128}.png
+dist/public/            # Build output — this is what you load unpacked
+build-extension.sh      # Builds both wasm targets, assembles dist/public
+release.sh              # Version bump across Cargo.toml + manifest, then tag
+add-learning.sh         # Standalone bash predecessor (yt-dlp → form fill);
+                        # not part of the extension or its build
 ```
+
+**The two targets are built differently**, which `build-extension.sh` exists to
+paper over. The popup goes through `dx bundle` (it's a real Dioxus app with
+HTML and assets); the worker goes through `dx build --bin background`, since it
+has no UI and needs none of that packaging. The worker's generated glue
+hardcodes the hashed `.wasm` filename it was built against, so the script
+renames both outputs to stable names and patches that reference — which is what
+lets the checked-in `extension/background.js` `import` them without knowing any
+hash. Old hashed outputs aren't cleaned between runs, so it wipes them first;
+otherwise a stale `.js` can be paired with a fresh `.wasm`.
 
 ---
 
 ## UI Structure
 
-The app is a single-page tabbed interface (`max-width: 720px`, centred):
+The popup is a tabbed interface in a fixed 400px-wide window. That width lives
+directly on `body` (see the comment at the top of `styles.css`): Chrome sizes
+the popup from `body`'s own rendered box, so a centred-but-narrower `.container`
+would just float in the middle of a too-large window.
 
-- **Add Learning** — URL input, optional date override, optional AI summary toggle
-- **HF Token** — Store/update a Hugging Face API token
-- **Install Extension** — Instructions + export for the companion browser extension
-- **History** — Paginated list of past learning entries from SQLite
+- **Add Learning** — URL input, optional date override, optional AI summary
+  toggle, and the "Add Page Learning" button that captures the active tab
+- **HF Token** — store/update the Hugging Face API token (`HF_API_TOKEN`)
+- **History** — every stored entry, newest first, with a total count and a
+  Clear History button. Not paginated: `get_all_history` returns the lot
 - **Help** — FAQ and usage guide
 
 **Toasts** — a single shared toast (`app.rs`, provided via Dioxus context so
@@ -166,10 +209,12 @@ warning users see.
 
 ## Style Conventions
 
-- Single stylesheet: [`assets/styles.css`](assets/styles.css)
+- Single stylesheet: [`assets/styles.css`](assets/styles.css) — popup only. The
+  in-page panel carries its own styles inside its shadow root and deliberately
+  shares nothing with this file, since it renders on other people's pages.
 - Font stack: `Inter, Avenir, Helvetica, Arial, sans-serif`
 - Light mode: bg `#f6f6f6`, text `#0f0f0f`; Dark mode: bg `#2f2f2f`, text `#f6f6f6` (via `prefers-color-scheme`)
-- Accent / interactive colour: `#396cd8`
+- Accent / interactive colour: `#396cd8` (hover `#2d5bbf`); warning `#d9a02c`; error `#d83939`
 - `border-radius: 8px` on inputs and buttons; subtle `box-shadow` on interactive elements
 - No external CSS frameworks — all styles are written by hand in `styles.css`
 
@@ -177,8 +222,19 @@ warning users see.
 
 ## Code Conventions
 
-- Rust edition 2024 (frontend), 2021 (Tauri backend)
-- Each content-type handler lives in its own `controllers/*.rs` module
-- Tauri commands are registered explicitly in [`src-tauri/src/lib.rs`](src-tauri/src/lib.rs)
-- Frontend calls the backend exclusively via Tauri's `invoke()` bridge
+- Rust edition 2024, one crate, two binary targets
+- Each content source lives in its own module under [`src/learning/`](src/learning/)
+- `chrome.*` bindings are confined to [`browser.rs`](src/browser.rs) (tabs,
+  scripting, runtime messaging) and [`storage.rs`](src/storage.rs)
+  (`storage.local`). Nothing else in the Rust reaches for a browser API directly
+- Anything the worker should expose to JS needs a `#[wasm_bindgen]` export in
+  [`src/bin/background.rs`](src/bin/background.rs) **and** a matching handler in
+  [`extension/background.js`](extension/background.js) — the two are edited together
+- The popup never runs the pipeline itself; it sends a message and awaits the
+  result, so work survives the popup closing mid-flight
+- New static files under `extension/` must be added to the `cp` line in
+  `build-extension.sh`, or they won't reach `dist/public`
+- `chrome.scripting.executeScript`'s `func` needs a real function reference, and
+  the extension CSP forbids `unsafe-eval` — so injected functions are declared
+  as `#[wasm_bindgen(inline_js = "…")]` rather than built from a string
 - Prefer minimal, targeted changes — do not refactor unrelated code
