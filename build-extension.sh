@@ -6,6 +6,23 @@ set -euo pipefail
 # panel.js) into dist/public, ready to be loaded unpacked via
 # chrome://extensions.
 
+# Start both the output directory and the popup's build directory from empty.
+#
+# dx names its assets by content hash and never removes the ones a previous
+# build left behind, and `dx bundle` copies that whole directory into
+# dist/public — so without the second wipe the bundle accumulates every
+# stylesheet and wasm blob this project has ever produced (164 files / 133MB
+# at the time of writing, against 3 files / 4.7MB for one build's worth). Only
+# the hashes the current wasm references are ever loaded; the rest is dead
+# weight that still ships in the unpacked extension, and makes it needlessly
+# hard to tell which stylesheet is the live one when debugging. Clearing it is
+# not even a cost — copying the stale pile took longer than rebuilding.
+#
+# Wiping dist as well means it only ever holds what this run produced: when a
+# step below fails, the result is a visibly missing file rather than the last
+# build's copy sitting there looking current.
+rm -rf dist target/dx/owls-ui
+
 dx bundle --release
 
 # dx's generated index.html preloads the module script with `crossorigin`,
@@ -25,6 +42,7 @@ mv dist/public/index.html.tmp dist/public/index.html
 # otherwise the glob below can pair a stale .js with a fresh .wasm (or vice
 # versa) from a previous build.
 rm -rf target/dx/background
+
 dx build --bin background --platform web --release --inject-loading-scripts false
 
 BG_ASSETS="target/dx/background/release/web/public/assets"

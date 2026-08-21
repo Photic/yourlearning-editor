@@ -144,8 +144,14 @@ has no UI and needs none of that packaging. The worker's generated glue
 hardcodes the hashed `.wasm` filename it was built against, so the script
 renames both outputs to stable names and patches that reference — which is what
 lets the checked-in `extension/background.js` `import` them without knowing any
-hash. Old hashed outputs aren't cleaned between runs, so it wipes them first;
-otherwise a stale `.js` can be paired with a fresh `.wasm`.
+hash. Old hashed outputs aren't cleaned between runs, so the script wipes
+`dist` and both `target/dx` build directories up front. That's not tidiness:
+`dx bundle` copies its whole asset directory into `dist/public`, so without the
+wipe every stylesheet and wasm blob the project has ever produced ships in the
+unpacked extension (164 files / 133MB, against 3 files / 4.7MB for one build's
+worth), and on the worker side a stale `.js` can be paired with a fresh
+`.wasm`. Clearing it costs nothing — copying the stale pile took longer than
+rebuilding it.
 
 ---
 
@@ -162,6 +168,24 @@ would just float in the middle of a too-large window.
 - **History** — every stored entry, newest first, with a total count and a
   Clear History button. Not paginated: `get_all_history` returns the lot
 - **Help** — FAQ and usage guide
+- **Settings** — a cogwheel (U+2699, the text glyph rather than the emoji, so
+  it takes the tab's own color) parked at the right edge of the tab bar. Holds
+  one switch today: **Show the in-page panel** (`SHOW_PAGE_PANEL`)
+
+The tab bar distributes its width with `flex-grow` rather than letting each tab
+size to its own text, because the font stack's resolved width varies far more
+than it looks: the same four labels measure ~158px in Avenir (what the popup
+gets on macOS) and ~228px in the Helvetica fallback. Sized to content, the
+Avenir case leaves nearly a third of the bar empty. Growing them equally keeps
+the row evenly spaced either way, since each label is centred in its tab.
+
+The type size and padding still matter at the bottom end: the tabs are
+`white-space: nowrap` and so can't shrink below their text, and Chrome sizes
+the popup from the document's scroll width — a bar that overflows doesn't clip,
+it stretches the whole window past the 400px `body` asks for.
+
+Measuring this in headless Chrome does not work: it resolves the fallback font,
+not Avenir, so its numbers are ~45% wide and describe a layout nobody sees.
 
 **Toasts** — a single shared toast (`app.rs`, provided via Dioxus context so
 any tab can raise one) replaces one-off inline confirm banners. A toast with
@@ -200,6 +224,16 @@ the right edge of the viewport that expands into a card on hover.
   the same key the popup's checkbox writes; unset means off. It sends an empty
   `dateOverride` (i.e. today), since the date field is transient popup state
   and the rail has nowhere to put a date picker.
+- **On/off** — the popup's Settings tab writes `SHOW_PAGE_PANEL`, and the panel
+  hides itself (a `display: none` class on the dock, not a teardown, so it can
+  come back) when it reads the literal `"false"`. Anything else, including an
+  unset key, means shown — a fresh install gets the rail without the popup
+  having been opened. The dock starts out hidden and is revealed once the read
+  resolves, since a rail that flashes up on a page where it was switched off is
+  worse than one that arrives a few milliseconds late. A
+  `chrome.storage.onChanged` listener applies later flips live: a content
+  script only re-runs on navigation, so without it a stale rail would sit on
+  every already-open tab and read as the switch not having worked.
 - **Fullscreen** — `fullscreenchange` (and the `webkit` variant) toggles
   `display: none` on the dock, so the rail disappears while a video is playing
   edge to edge. Chrome hides it for free in the common case, because the

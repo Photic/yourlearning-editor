@@ -179,26 +179,66 @@ button {
   width: 100%;
 }
 
+/* The tabs share the bar's width out between them rather than each being
+   sized to its own text: `flex-grow` splits whatever is left over equally
+   five ways, so they stay evenly spaced whichever font the stack resolves to
+   — Avenir and the Helvetica fallback differ by ~70px across these labels,
+   which is the difference between a snug row and a third of the bar sitting
+   empty. Each label stays centred in its tab, so equal growth reads as equal
+   gaps.
+
+   They still can't shrink below their own text (`white-space: nowrap`), and
+   overflow here isn't clipped but *stretched* — Chrome measures the popup
+   from the document's scroll width, so a bar that doesn't fit widens the
+   whole window past what the `body` rule asks for. Hence the modest padding
+   and type size. */
 .tab {
+  flex: 1 1 auto;
   background: none;
   border: none;
   border-bottom: 2px solid transparent;
   border-radius: 0;
   box-shadow: none;
-  padding: 0.5em 1.1em;
+  padding: 0.5em 0.6em;
+  font-size: 0.9em;
   color: #555;
   font-weight: 500;
   margin-bottom: -1px;
 }
 
+/* The global `button:hover` rule turns a button's border blue, which on a tab
+   would read as a phantom underline under whatever the pointer happens to be
+   over. Tabs suppress it and darken their label instead. */
 .tab:hover:not(:disabled) {
-  border-color: transparent;
+  border-bottom-color: transparent;
   color: #0f0f0f;
 }
 
 .tab--active {
   border-bottom-color: #396cd8;
   color: #396cd8;
+}
+
+/* Re-asserts the underline for the hover case only. `.tab--active` is a lone
+   class and loses to `.tab:hover:not(:disabled)` above, which is how hovering
+   the selected tab used to erase the very line marking it as selected. Only
+   the border is restated here, deliberately: the label still takes the hover
+   color, so hover keeps giving feedback, and the dark theme's light-on-dark
+   hover text isn't traded for a blue that barely clears the background. */
+.tab--active:hover:not(:disabled) {
+  border-bottom-color: #396cd8;
+}
+
+/* Settings is a cogwheel rather than a word, but it grows with the rest (it
+   carries `.tab` too) so it sits in the row's rhythm instead of being pushed
+   off to the right edge on its own. */
+.tab--icon {
+  padding: 0.4em 0.5em;
+  /* Larger than the labelled tabs (0.9em): the glyph is the only thing
+     naming this tab, and U+2699 draws smaller than letters at the same size.
+     Deliberately the bare code point, not the emoji form (U+2699 U+FE0F) —
+     the text glyph takes the tab's own color, so it goes blue when active. */
+  font-size: 1.15em;
 }
 
 .install-steps {
@@ -321,6 +361,40 @@ button {
   margin: 0;
   color: #555;
   font-size: 0.95em;
+}
+
+.settings {
+  width: 100%;
+  text-align: left;
+}
+
+.settings-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+/* Nudged down to sit on the label's first line rather than above it, since
+   the row aligns to the top for the sake of the wrapped hint below. */
+.settings-row input {
+  margin: 0.35em 0 0;
+  flex-shrink: 0;
+}
+
+.settings-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.settings-label {
+  font-weight: 500;
+}
+
+.settings-hint {
+  font-size: 0.8em;
+  color: #555;
+  line-height: 1.5;
 }
 
 .history-header {
@@ -492,6 +566,10 @@ button {
   }
 
   .focus-page-hint {
+    color: #aaa;
+  }
+
+  .settings-hint {
     color: #aaa;
   }
 

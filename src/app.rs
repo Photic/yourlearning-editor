@@ -13,6 +13,7 @@ enum Tab {
     HfToken,
     History,
     Help,
+    Settings,
 }
 
 // ── Toast system ────────────────────────────────────────────────────────────
@@ -184,6 +185,15 @@ pub fn App() -> Element {
                     onclick: move |_| active_tab.set(Tab::Help),
                     "Help"
                 }
+                // A cogwheel rather than a word: the four labelled tabs
+                // already fill the bar's width, and a settings icon is
+                // universal enough not to need one.
+                button {
+                    class: if *active_tab.read() == Tab::Settings { "tab tab--icon tab--active" } else { "tab tab--icon" },
+                    title: "Settings",
+                    onclick: move |_| active_tab.set(Tab::Settings),
+                    "⚙"
+                }
             }
 
             // ── Tab panels ────────────────────────────────────────────────
@@ -199,6 +209,9 @@ pub fn App() -> Element {
                 },
                 Tab::Help => rsx! {
                     HelpTab {}
+                },
+                Tab::Settings => rsx! {
+                    SettingsTab {}
                 },
             }
 
@@ -704,6 +717,65 @@ fn HelpTab() -> Element {
                     "The app extracts content from the page's HTML. "
                     "Pages that require JavaScript to render, or that are behind a login, may not extract cleanly. "
                     "You can edit any field directly in the YourLearning form before submitting."
+                }
+            }
+        }
+    }
+}
+
+// ── Settings tab ──────────────────────────────────────────────────────────────
+
+/// `chrome.storage.local` key holding the in-page panel's on/off state, read
+/// here and in `extension/panel.js`. Only the literal `"false"` turns the
+/// panel off — an unset key means on, so a fresh install (and an upgrade from
+/// before this setting existed) gets the panel without anything being written.
+const SHOW_PAGE_PANEL_KEY: &str = "SHOW_PAGE_PANEL";
+
+fn SettingsTab() -> Element {
+    let mut show_page_panel = use_signal(|| true);
+    let toast: Signal<Option<Toast>> = use_context();
+
+    use_resource(move || async move {
+        let stored = storage::get_setting(SHOW_PAGE_PANEL_KEY).await.ok().flatten();
+        show_page_panel.set(stored.map(|value| value != "false").unwrap_or(true));
+    });
+
+    rsx! {
+        p { class: "subtitle", "Extension settings — stored locally, in this browser." }
+
+        div { class: "settings",
+            label { class: "settings-row", r#for: "show-page-panel",
+                input {
+                    id: "show-page-panel",
+                    r#type: "checkbox",
+                    checked: *show_page_panel.read(),
+                    onchange: move |event| {
+                        let enabled = event.checked();
+                        // Flip the checkbox first so it tracks the click, and
+                        // put it back below if the write doesn't land — the
+                        // panel reads storage, so a failed save would leave
+                        // the two disagreeing.
+                        show_page_panel.set(enabled);
+                        spawn(async move {
+                            let value = if enabled { "true" } else { "false" };
+                            if let Err(e) = storage::set_setting(SHOW_PAGE_PANEL_KEY, value).await {
+                                show_page_panel.set(!enabled);
+                                show_info_toast(
+                                    toast,
+                                    ToastKind::Error,
+                                    format!("Could not save that setting: {e}"),
+                                );
+                            }
+                        });
+                    },
+                }
+                span { class: "settings-text",
+                    span { class: "settings-label", "Show the in-page panel" }
+                    span { class: "settings-hint",
+                        "The thin rail against the right edge of every page, which slides out "
+                        "into an \"Add this page\" button. Changing this applies to open tabs "
+                        "straight away — no reload needed."
+                    }
                 }
             }
         }

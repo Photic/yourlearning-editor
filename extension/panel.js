@@ -28,6 +28,12 @@
   // rail collapses back to its resting state.
   const RESULT_LINGER_MS = 4000;
 
+  // `chrome.storage.local` key holding this panel's on/off state, written by
+  // the popup's Settings tab. Only the literal "false" turns the panel off:
+  // an unset key means on, so a fresh install gets the rail without the popup
+  // ever having been opened.
+  const SHOW_PANEL_KEY = "SHOW_PAGE_PANEL";
+
   // ── Host element ───────────────────────────────────────────────────────────
   // An unknown tag name rather than a <div>, so the host page's own CSS (which
   // very often has opinions about `div`) has nothing to match. The handful of
@@ -79,6 +85,10 @@
 
     /* Applied while the page is in fullscreen — see syncFullscreen below. */
     .dock.is-hidden { display: none; }
+
+    /* Applied while the panel is switched off in settings, and until the
+       stored setting has been read — see applyEnabled below. */
+    .dock.is-off { display: none; }
 
     .rail {
       width: 4px;
@@ -175,7 +185,11 @@
   root.adoptedStyleSheets = [sheet];
 
   const dock = document.createElement("div");
-  dock.className = "dock";
+  // Starts hidden and is revealed once storage answers, rather than the other
+  // way round: reading the setting is asynchronous, and a rail that appears
+  // for a frame on a page where the user has switched it off is worse than
+  // one that arrives a few milliseconds late.
+  dock.className = "dock is-off";
   dock.innerHTML = `
     <div class="card" part="card"></div>
     <div class="rail"></div>
@@ -353,6 +367,41 @@
     if (awaitingConsent) return;
     if (rail.classList.contains("is-busy")) return;
     if (collapseTimer !== null || dock.classList.contains("is-open")) renderIdle();
+  });
+
+  // ── Enablement ─────────────────────────────────────────────────────────────
+
+  /// Shows or hides the whole dock from the popup's "Show the in-page panel"
+  /// setting. Hiding rather than tearing the host out of the document keeps
+  /// this reversible: the setting can be flipped back on from the popup while
+  /// this page sits open, and the same node just reappears.
+  function applyEnabled(enabled) {
+    dock.classList.toggle("is-off", !enabled);
+  }
+
+  /// The stored value is a string, and anything other than "false" — including
+  /// an unset key — counts as on.
+  function isEnabledValue(value) {
+    return value !== "false";
+  }
+
+  chrome.storage.local
+    .get(SHOW_PANEL_KEY)
+    .then((stored) => applyEnabled(isEnabledValue(stored[SHOW_PANEL_KEY])))
+    .catch((e) => {
+      // Storage is unreadable for some reason; fall back to the default rather
+      // than leaving the panel invisible with no way to bring it back.
+      console.debug("[OWLS] Could not read", SHOW_PANEL_KEY, "— showing panel:", e);
+      applyEnabled(true);
+    });
+
+  // Live, so toggling the setting doesn't require reloading every open tab —
+  // a content script only re-runs on navigation, and a stale rail left behind
+  // on twenty tabs would read as the switch not having worked.
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== "local") return;
+    const change = changes[SHOW_PANEL_KEY];
+    if (change) applyEnabled(isEnabledValue(change.newValue));
   });
 
   // ── Fullscreen ─────────────────────────────────────────────────────────────
